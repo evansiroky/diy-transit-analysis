@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Project-generated data/reports (see specs/principles.md#local-files-as-the-unit-of-state)
+output/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

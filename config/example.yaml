@@ -1,0 +1,27 @@
+# Example config for diy-transit-analysis.
+# Schema: specs/data-model.md#config-file
+# Validation rules: specs/behaviors/config-validation.md
+#
+# Copy this file, add/edit agencies, and point --config at your copy.
+# Adding a new agency is a config change only — no code change required
+# (specs/principles.md#config-driven-agency-onboarding).
+
+output_dir: output
+
+agencies:
+  SacRT:
+    # Live, public GTFS Schedule feed (verified reachable as of this commit).
+    gtfs_schedule_url: "http://iportal.sacrt.com/GTFS/SRTD/google_transit.zip"
+
+    tides:
+      # ASSUMED SHAPE, NOT VERIFIED against the live tides.dds.dot.ca.gov
+      # bucket — see specs/architecture.md#tides-historic-data-access and
+      # src/diy_transit_analysis/tides/historic.py. Replace with the real
+      # bucket name/prefix once confirmed.
+      gcs_bucket: "tides-prod-sacrt"          # ASSUMED, verify
+      gcp_billing_project: "your-gcp-project-id"  # your own GCP project, billed for requester-pays egress
+      agency_prefix: "SacRT"
+
+    date_range:
+      start: "2026-07-01"
+      end: "2026-07-07"

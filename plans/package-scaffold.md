@@ -1,12 +1,12 @@
 ---
-status: planned
+status: done
 depends: []
 specs:
   - specs/architecture.md
   - specs/data-model.md
   - specs/behaviors/config-validation.md
 issues: []
-pr:
+pr: initial-scaffold-direct-to-main
 ---
 
 # Plan: Python package scaffold, config loading, and CLI skeleton
@@ -65,11 +65,11 @@ plumbing.
 
 ## Validation
 
-- [ ] `pip install -e .` succeeds in a clean virtualenv.
-- [ ] `diy-transit-analysis --help` lists all three subcommands.
-- [ ] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency SacRT` loads and validates the example config without error, then raises `NotImplementedError` at the point where fetch logic will land.
-- [ ] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency NotARealAgency` fails config validation with a message naming the unknown agency (per `specs/behaviors/config-validation.md`).
-- [ ] A config missing a required field fails with a message listing every missing field, not just the first.
+- [x] `pip install -e .` succeeds in a clean virtualenv (verified with a Python 3.11 venv).
+- [x] `diy-transit-analysis --help` lists all three subcommands.
+- [x] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency SacRT` loads and validates the example config without error. (Superseded in a good way — see Notes: this repo's initial scaffold implemented `gtfs/schedule.py` and `tides/historic.py` in the same working session as `plans/data-fetch.md`, so this command now fetches and parses the real SacRT feed end-to-end instead of stopping at a `NotImplementedError` stub.)
+- [x] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency NotARealAgency` fails config validation with a message naming the unknown agency (per `specs/behaviors/config-validation.md`).
+- [x] A config missing a required field fails with a message listing every missing field, not just the first.
 
 ## Risks / unknowns
 
@@ -81,8 +81,23 @@ plumbing.
 
 ## Notes
 
-(Populated at closeout.)
+- Sequencing deviation from the Approach: because this whole DAG was built
+  as one solo initial-scaffold pass rather than across separate reviewed
+  PRs, `gtfs/schedule.py` (from `plans/data-fetch.md`) and
+  `report/on_time_performance.py` (from `plans/otp-report.md`) were
+  implemented in the same working session as this plan's stub-only scope,
+  rather than landing as later, separate stub-fill-in commits. The three
+  plans still exist as separate scope/validation records — this note just
+  explains why this plan's own validation runs against the finished
+  binary rather than a stub.
+- `config.load_config()` raises a single `ConfigError` aggregating every
+  validation problem, verified against a config missing four required
+  fields at once (all four appear in one error message).
+- No PR/review gate for this initial scaffold, per the user's explicit
+  instruction for this one-time solo bootstrap — `pr:` above records that
+  rather than a real merged-PR number.
 
 ## Follow-ups
 
-(Populated at closeout.)
+None beyond what's already tracked in `plans/data-fetch.md` and
+`plans/otp-report.md`.
