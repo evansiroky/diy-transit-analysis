@@ -1,0 +1,95 @@
+---
+status: planned
+depends: [package-scaffold]
+specs:
+  - specs/architecture.md
+  - specs/data-model.md
+issues: []
+pr:
+---
+
+# Plan: GTFS Schedule fetch/parse and TIDES historic data fetch
+
+## Scope
+
+In scope: filling in `gtfs/schedule.py` (fetch a GTFS Schedule `.zip` over
+HTTP, parse it with `gtfs-kit`) and `tides/historic.py` (fetch an agency's
+historic TIDES files from its configured GCS bucket), and wiring both into
+the `fetch-gtfs` / `fetch-tides` CLI subcommands stubbed out in
+`plans/package-scaffold.md`.
+
+Out of scope: the on-time-performance report itself
+(`plans/otp-report.md`, which consumes the outputs of this plan). Also out
+of scope: verifying the TIDES bucket name/layout against the live
+`tides.dds.dot.ca.gov` service with a real GCP project — that requires a
+GCP account with billing, which is a manual one-time step for whoever runs
+this for real; this plan implements against the documented assumption in
+`specs/architecture.md#tides-historic-data-access` and fails loudly if the
+assumption doesn't hold (e.g. bucket not found), rather than silently
+returning nothing.
+
+## Implements
+
+- `specs/architecture.md` — "GTFS Schedule feed fetch + parse" and "TIDES
+  historic data access" sections.
+- `specs/data-model.md#gtfs-schedule-in-memory` and
+  `specs/data-model.md#tides-historic-data-on-disk-fetched`.
+
+## Approach
+
+1. `gtfs/schedule.py`: `fetch_schedule(url: str, dest_dir: Path) -> Path`
+   downloads to `<dest_dir>/gtfs.zip` via `requests` streaming GET;
+   `load_schedule(zip_path: Path) -> gtfs_kit.Feed` wraps
+   `gtfs_kit.read_feed(path, dist_units="km")`.
+2. `tides/historic.py`: `fetch_historic(tides_config, date_range,
+   dest_dir: Path) -> list[Path]` using `google.cloud.storage.Client()`
+   and `bucket(gcs_bucket, user_project=gcp_billing_project)`, listing
+   blobs under `agency_prefix` (if set) and downloading each to
+   `dest_dir`. The function's docstring and an inline comment both state
+   explicitly that the bucket name/layout is an assumption pending
+   verification (per
+   `specs/principles.md#fail-loud-on-unverified-assumptions`), and it
+   raises a clearly-named `TidesAccessError` (wrapping the underlying GCS
+   exception) rather than swallowing failures, so a wrong assumption is
+   loud, not silent.
+3. Wire both into `cli.py`'s `fetch-gtfs` / `fetch-tides` subcommands,
+   replacing their `NotImplementedError` stubs; each writes into
+   `<output_dir>/<agency>/gtfs/` or `<output_dir>/<agency>/tides/raw/`
+   respectively, per `specs/data-model.md`.
+4. Add a small local test fixture — a trimmed real GTFS zip (a handful of
+   routes/trips/stops from a small agency, checked in under
+   `tests/fixtures/`) — so `gtfs/schedule.py`'s parse path is tested
+   without a live network call, per `specs/architecture.md#testing`.
+   `tides/historic.py`'s GCS calls are mocked in tests (no live GCS
+   fixture, since there is no verified-real bucket to fetch a fixture
+   from yet).
+
+## Validation
+
+- [ ] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency SacRT` downloads and parses the real SacRT GTFS feed end-to-end, writing the zip under `output/SacRT/gtfs/` and printing a summary (route/trip counts) without error.
+- [ ] `gtfs/schedule.py` has a passing unit test against the checked-in trimmed fixture, with no live network call.
+- [ ] `tides/historic.py` raises `TidesAccessError` (not a raw/uncaught GCS exception) when the bucket doesn't exist or credentials are missing, verified with a mocked GCS client in a unit test.
+- [ ] `tides/historic.py`'s docstring and `specs/architecture.md` both still say "assumed, verify against live endpoint" — no code comment silently drops that caveat.
+
+## Risks / unknowns
+
+- **TIDES bucket shape unverified** — the single largest unknown in this
+  plan. If the real bucket layout differs meaningfully (e.g. it's a
+  BigQuery dataset instead of flat GCS objects, or requires a signed URL
+  flow instead of `user_project` billing), `tides/historic.py`'s
+  implementation will need a follow-up plan once someone verifies the
+  live endpoint with a real GCP project. Tracked as a Follow-up at
+  closeout if not resolved within this plan.
+- **No GCP project available during implementation** — this plan may
+  close with the TIDES fetch path implemented-but-unverified against the
+  live service; that's an acceptable, explicitly-flagged gap, not a
+  blocker for closing the plan, per
+  `specs/principles.md#fail-loud-on-unverified-assumptions`.
+
+## Notes
+
+(Populated at closeout.)
+
+## Follow-ups
+
+(Populated at closeout.)
