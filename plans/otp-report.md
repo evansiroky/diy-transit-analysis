@@ -43,6 +43,15 @@ turns out to matter before this ships for real).
      fixture rather than live TIDES data.
    - Computes `on_time_percent` / `cancellation_percent`, `null`-safe per
      `specs/data-model.md`.
+   - Deferred from [`data-fetch`](data-fetch.md): `fetch_historic()` does
+     not filter by date range (the real TIDES bucket layout is still
+     unverified, so there's no confirmed way to filter server-side yet).
+     Until that lands, this report's GTFS-side `scheduled_trip_count`
+     calculation is the de facto date filter for the whole report — the
+     TIDES join must not assume `tides_files` only contains rows inside
+     `date_range`, and should itself drop/ignore any performed-trip rows
+     whose `scheduled_departure` falls outside `[start, end]` before
+     counting, rather than trusting the fetch step to have pre-filtered.
 2. `write_report(df, output_dir, agency, date_range) -> Path` writes to
    `<output_dir>/reports/<agency>/otp-<start>-<end>.csv`, per
    `specs/architecture.md#output-format`.
@@ -55,6 +64,7 @@ turns out to matter before this ships for real).
 - [ ] Running the same command twice with the same fetched inputs produces byte-identical CSV output (per `specs/principles.md#reproducibility-over-cleverness`).
 - [ ] Unit test covers the null-safety rule: a route with `scheduled_trip_count == 0` reports `cancellation_percent` as `null`, not a divide-by-zero error.
 - [ ] Unit test covers the on-time window boundary (a trip exactly -1 or +5 minutes off counts as on-time; -1:01 or +5:01 does not).
+- [ ] Unit test covers the deferral from [`data-fetch`](data-fetch.md): a TIDES row whose `scheduled_departure` falls outside the configured `date_range` is excluded from `performed_trip_count`/`on_time_trip_count`, even though `fetch_historic()` itself does no date filtering.
 
 ## Risks / unknowns
 

@@ -1,11 +1,11 @@
 ---
-status: planned
+status: done
 depends: [package-scaffold]
 specs:
   - specs/architecture.md
   - specs/data-model.md
 issues: []
-pr:
+pr: initial-scaffold-direct-to-main
 ---
 
 # Plan: GTFS Schedule fetch/parse and TIDES historic data fetch
@@ -66,10 +66,10 @@ returning nothing.
 
 ## Validation
 
-- [ ] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency SacRT` downloads and parses the real SacRT GTFS feed end-to-end, writing the zip under `output/SacRT/gtfs/` and printing a summary (route/trip counts) without error.
-- [ ] `gtfs/schedule.py` has a passing unit test against the checked-in trimmed fixture, with no live network call.
-- [ ] `tides/historic.py` raises `TidesAccessError` (not a raw/uncaught GCS exception) when the bucket doesn't exist or credentials are missing, verified with a mocked GCS client in a unit test.
-- [ ] `tides/historic.py`'s docstring and `specs/architecture.md` both still say "assumed, verify against live endpoint" — no code comment silently drops that caveat.
+- [x] `diy-transit-analysis fetch-gtfs --config config/example.yaml --agency SacRT` downloads and parses the real SacRT GTFS feed end-to-end, writing the zip under `output/SacRT/gtfs/` and printing a summary (route/trip counts) without error. (Verified live: 47 routes, 4953 trips, 2534 stops from `http://iportal.sacrt.com/GTFS/SRTD/google_transit.zip`.)
+- [x] `gtfs/schedule.py` has a passing unit test against the checked-in trimmed fixture (`tests/fixtures/mini_gtfs.zip`), with no live network call.
+- [x] `tides/historic.py` raises `TidesAccessError` (not a raw/uncaught GCS exception) when the bucket doesn't exist or credentials are missing, verified with a mocked GCS client in a unit test, and manually confirmed against the real (unconfigured-credentials) environment — a raw `EnvironmentError` from `google.cloud.storage.Client()` surfaced through the first implementation; broadened the except clause to also catch that case and wrap it, so no un-wrapped exception reaches the CLI.
+- [x] `tides/historic.py`'s docstring and `specs/architecture.md` both still say "assumed, verify against live endpoint" — no code comment silently drops that caveat.
 
 ## Risks / unknowns
 
@@ -88,8 +88,29 @@ returning nothing.
 
 ## Notes
 
-(Populated at closeout.)
+- `fetch_historic()`'s actual signature dropped the `date_range` parameter
+  sketched in Approach step 2 — with the bucket layout itself unverified,
+  there's no confirmed way to filter server-side or client-side by date
+  yet, so the MVP fetches everything under `agency_prefix` and leaves
+  date filtering to the report step (which already scopes its GTFS-side
+  calculation to the configured window). Tracked as a Follow-up below.
+- An empty `list_blobs()` result is treated as a `TidesAccessError`, not a
+  legitimate "no data for this window" case — reasonable for an
+  unverified integration at MVP scale, but will need reconsidering once
+  the real bucket is confirmed and genuinely-empty windows become
+  possible.
+- Verified GTFS fetch against the real, live SacRT feed rather than only
+  a mock — this project's one real, working network integration so far.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Deferred to [`otp-report`](otp-report.md) — once real TIDES data is
+  fetchable, `fetch_historic` should accept the agency's `date_range` and
+  either filter objects client-side by name/prefix or pass it through to
+  whatever real query mechanism the live bucket turns out to support;
+  until then, `otp-report`'s join logic is the de facto date filter via
+  the GTFS side of the calculation.
+- Tracked as: verifying the real TIDES bucket name, prefix/partitioning
+  scheme, and file format against a live GCP project with billing enabled
+  — no issue filed yet, this is a manual one-person step for whoever next
+  has TIDES portal access.
