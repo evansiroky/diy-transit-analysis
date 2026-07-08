@@ -1,10 +1,10 @@
 ---
-status: planned
+status: done
 depends: [data-fetch]
 specs:
   - specs/data-model.md
 issues: []
-pr:
+pr: initial-scaffold-direct-to-main
 ---
 
 # Plan: On-time performance report
@@ -60,11 +60,11 @@ turns out to matter before this ships for real).
 
 ## Validation
 
-- [ ] `diy-transit-analysis report otp --config config/example.yaml --agency SacRT` produces a CSV at `output/reports/SacRT/otp-<start>-<end>.csv` with exactly the columns listed in `specs/data-model.md#on-time-performance-report-output`, given previously-fetched GTFS + TIDES data.
-- [ ] Running the same command twice with the same fetched inputs produces byte-identical CSV output (per `specs/principles.md#reproducibility-over-cleverness`).
-- [ ] Unit test covers the null-safety rule: a route with `scheduled_trip_count == 0` reports `cancellation_percent` as `null`, not a divide-by-zero error.
-- [ ] Unit test covers the on-time window boundary (a trip exactly -1 or +5 minutes off counts as on-time; -1:01 or +5:01 does not).
-- [ ] Unit test covers the deferral from [`data-fetch`](data-fetch.md): a TIDES row whose `scheduled_departure` falls outside the configured `date_range` is excluded from `performed_trip_count`/`on_time_trip_count`, even though `fetch_historic()` itself does no date filtering.
+- [x] `diy-transit-analysis report otp --config config/example.yaml --agency SacRT` produces a CSV at `output/reports/SacRT/otp-<start>-<end>.csv` with exactly the columns listed in `specs/data-model.md#on-time-performance-report-output`, given previously-fetched GTFS + TIDES data. (Verified against the real fetched SacRT GTFS feed plus a small hand-built TIDES CSV sample, since real TIDES fetch is unverified — see `plans/data-fetch.md`.)
+- [x] Running the same command twice with the same fetched inputs produces byte-identical CSV output (per `specs/principles.md#reproducibility-over-cleverness`). Verified with `diff` on two consecutive runs.
+- [x] Unit test covers the null-safety rule: a route with `scheduled_trip_count == 0` reports `cancellation_percent` as `null`, not a divide-by-zero error.
+- [x] Unit test covers the on-time window boundary (a trip exactly -1 or +5 minutes off counts as on-time; -1:01 or +5:01 does not).
+- [x] Unit test covers the deferral from [`data-fetch`](data-fetch.md): a TIDES row whose `scheduled_departure` falls outside the configured `date_range` is excluded from `performed_trip_count`/`on_time_trip_count`, even though `fetch_historic()` itself does no date filtering.
 
 ## Risks / unknowns
 
@@ -80,8 +80,27 @@ turns out to matter before this ships for real).
 
 ## Notes
 
-(Populated at closeout.)
+- Absorbed the `data-fetch` deferral: the report now filters TIDES rows
+  by `scheduled_departure` falling inside `[start, end]` before any
+  counting, so it stays correct regardless of how much (or how little)
+  `fetch_historic()` pre-filters in the future.
+- TIDES CSV column-name assumptions (`route_id`, `trip_id`,
+  `scheduled_departure`, `actual_departure`, `cancelled`) are the single
+  biggest unverified surface in this report — see the module docstring in
+  `report/on_time_performance.py`. Not resolvable until real TIDES data
+  is fetchable (`plans/data-fetch.md` Follow-ups).
+- route_id/trip_id are read from TIDES CSVs with `dtype=str` explicitly —
+  without it, pandas infers numeric-looking agency IDs (e.g. `"001"`) as
+  int64, which both loses leading zeros and breaks the join against
+  gtfs-kit's string-typed route_id column. Found via the real SacRT
+  manual end-to-end run, not by the unit tests (the fixture's IDs
+  happened not to be numeric-looking).
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: making the -1/+5 minute on-time threshold configurable, if
+  a real agency's OTP convention turns out to differ once this is used
+  for real reporting (currently a fixed constant, per this plan's Scope).
+- Tracked as: confirming TIDES CSV column names/shape once real TIDES
+  data is fetchable — same underlying blocker as `plans/data-fetch.md`'s
+  bucket-verification follow-up.
