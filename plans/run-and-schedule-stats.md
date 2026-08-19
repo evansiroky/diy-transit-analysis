@@ -6,7 +6,7 @@ specs:
   - specs/data-model.md
   - specs/behaviors/config-validation.md
 issues: []
-pr: direct-to-branch-no-pr-requested
+pr: 1
 ---
 
 # Plan: `run` command and GTFS-only schedule-stats report

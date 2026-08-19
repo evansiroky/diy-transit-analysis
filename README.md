@@ -16,10 +16,15 @@ Google Cloud Storage bucket is laid out — see
 [`specs/architecture.md`](specs/architecture.md#tides-historic-data-access)
 and the module docstring in
 [`src/diy_transit_analysis/tides/historic.py`](src/diy_transit_analysis/tides/historic.py)
-before relying on it. The `report html` dashboard's two TIDES benchmarks
-(realtime completeness, ETA accuracy) rest on an even newer, similarly
-**unverified** guess at two additional TIDES CSV columns — see
-[`specs/data-model.md`](specs/data-model.md#tides-historic-data-on-disk-fetched).
+before relying on it. The `report html` dashboard's two ETA benchmarks
+implement the published
+[ETA Completeness Benchmark](https://github.com/SwiftlyInc/ETA-Completeness-Benchmark)
+and
+[ETA Accuracy Benchmark](https://github.com/TransitApp/ETA-Accuracy-Benchmark)
+methodologies exactly, but the trip-stop-level TIDES data they need is
+an even newer, similarly **unverified** guess at two additional TIDES
+CSV shapes — see
+[`specs/data-model.md`](specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files).
 
 This project follows [spec-driven development](CLAUDE.md) — `specs/` is
 the source of truth for intended behavior, `plans/` tracks work in flight.
@@ -57,9 +62,11 @@ project required).
 dashboard — no external scripts/fonts/CDN — combining GTFS-only schedule
 stats (vehicles in service by time of day + peak vehicles, scheduled
 trips per service day) with, when TIDES is configured and fetched,
-trips-performed and two benchmark stats (realtime completeness, ETA
-accuracy — see the Status section below on the TIDES assumptions behind
-these two).
+trips performed and the industry-standard
+[ETA Completeness](https://github.com/SwiftlyInc/ETA-Completeness-Benchmark)
+and [ETA Accuracy](https://github.com/TransitApp/ETA-Accuracy-Benchmark)
+benchmark scores (see the Status section above on the TIDES assumptions
+behind these two).
 
 The individual pipeline stages are also available standalone:
 

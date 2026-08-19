@@ -6,7 +6,7 @@ specs:
   - specs/data-model.md
   - specs/behaviors/config-validation.md
 issues: []
-pr: direct-to-branch-no-pr-requested
+pr: 2
 ---
 
 # Plan: Static HTML dashboard report

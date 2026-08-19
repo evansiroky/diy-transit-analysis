@@ -23,14 +23,38 @@ import pandas as pd
 from diy_transit_analysis.report import on_time_performance as otp
 from diy_transit_analysis.report import schedule_stats
 
-# ETA accuracy tolerance: a prediction counts as accurate if it's within
-# this of the actual departure. Fixed MVP constant, same precedent as the
-# OTP report's -1/+5 minute on-time window.
-# specs/data-model.md#static-html-dashboard-report-output
-ETA_ACCURACY_TOLERANCE = timedelta(minutes=3)
-
 _SERIES_COLOR_LIGHT = "#2a78d6"
 _SERIES_COLOR_DARK = "#3987e5"
+
+# ETA Accuracy Benchmark (https://github.com/TransitApp/ETA-Accuracy-Benchmark):
+# four time-to-arrival buckets, each with its own asymmetric early/late
+# tolerance. Order matches the source spec's own presentation (farthest
+# out first). (label, bucket_low_min, bucket_high_min, early_tolerance,
+# late_tolerance) — bucket range is [low, high) minutes-to-actual-arrival
+# at the moment the prediction was sampled; tolerance is inclusive on
+# both ends, per specs/data-model.md#eta-accuracy.
+_ACCURACY_BUCKETS = [
+    ("10-15 min away", 10, 15, timedelta(minutes=1.5), timedelta(minutes=4.5)),
+    ("6-10 min away", 6, 10, timedelta(minutes=1), timedelta(minutes=3.5)),
+    ("3-6 min away", 3, 6, timedelta(minutes=1), timedelta(minutes=2.5)),
+    ("0-3 min away", 0, 3, timedelta(minutes=0.5), timedelta(minutes=1.5)),
+]
+
+# ETA Completeness Benchmark's "0-15 minutes out" qualifying window for a
+# prediction — the union of the four accuracy buckets above.
+# https://github.com/SwiftlyInc/ETA-Completeness-Benchmark
+_COMPLETENESS_PREDICTION_WINDOW = (timedelta(minutes=0), timedelta(minutes=15))
+
+_TRIP_STOP_OUTCOME_COLUMNS = {
+    "service_date",
+    "trip_id",
+    "stop_id",
+    "vehicle_assigned",
+    "trip_cancelled",
+    "stop_skipped",
+}
+_PREDICTIONS_COLUMNS = {"service_date", "trip_id", "stop_id", "sampled_at", "predicted_arrival"}
+_ID_DTYPES = {"route_id": str, "trip_id": str, "stop_id": str}
 
 
 @dataclass(frozen=True)
@@ -46,12 +70,21 @@ class TripsByDate:
 
 
 @dataclass(frozen=True)
+class AccuracyBucket:
+    label: str
+    prediction_count: int
+    accurate_count: int
+    accuracy_percent: float | None  # None if prediction_count == 0
+
+
+@dataclass(frozen=True)
 class TidesBenchmarks:
     trips_performed: int
     realtime_completeness_percent: float | None
+    realtime_completeness_note: str | None
     eta_accuracy_percent: float | None
-    realtime_completeness_note: str | None = None
-    eta_accuracy_note: str | None = None
+    eta_accuracy_note: str | None
+    eta_accuracy_buckets: list[AccuracyBucket]
 
 
 @dataclass(frozen=True)
@@ -70,55 +103,174 @@ class DashboardData:
     tides: TidesBenchmarks | None
 
 
-def _build_tides_benchmarks(tides_files: list[Path], start: date, end: date) -> TidesBenchmarks:
-    performed = otp.read_tides_performed(tides_files)
+def _read_typed_csvs(tides_files: list[Path], required_columns: set[str]) -> pd.DataFrame:
+    """Concatenate every fetched CSV whose columns are a superset of `required_columns`.
 
+    Duck-typed by column presence, like every TIDES read in this project
+    (a fetched TIDES directory may hold several distinct CSV shapes side
+    by side) — see
+    specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files.
+    """
+    frames = []
+    for path in tides_files:
+        if path.suffix.lower() != ".csv":
+            continue
+        df = pd.read_csv(path, dtype=_ID_DTYPES)
+        if required_columns.issubset(df.columns):
+            frames.append(df)
+    if not frames:
+        return pd.DataFrame(columns=sorted(required_columns))
+    df = pd.concat(frames, ignore_index=True)
+    df["service_date"] = pd.to_datetime(df["service_date"]).dt.date
+    return df
+
+
+def _read_trip_stop_outcomes(tides_files: list[Path]) -> pd.DataFrame:
+    return _read_typed_csvs(tides_files, _TRIP_STOP_OUTCOME_COLUMNS)
+
+
+def _read_predictions(tides_files: list[Path]) -> pd.DataFrame:
+    return _read_typed_csvs(tides_files, _PREDICTIONS_COLUMNS)
+
+
+def _scheduled_trip_stops(feed: gk.Feed, start: date, end: date) -> pd.DataFrame:
+    """(date, trip_id, stop_id) rows for every trip actually scheduled on each date in [start, end].
+
+    The GTFS-derived denominator for ETA completeness — deliberately
+    independent of TIDES, so a trip-stop TIDES never reported at all is
+    still counted (and correctly comes out incomplete).
+    """
+    stop_times = feed.stop_times[["trip_id", "stop_id"]].drop_duplicates()
+    rows = []
+    for n in range((end - start).days + 1):
+        day = start + timedelta(days=n)
+        day_trips = feed.get_trips(date=day.strftime("%Y%m%d"))
+        if day_trips.empty:
+            continue
+        day_stops = stop_times[stop_times["trip_id"].isin(set(day_trips["trip_id"]))].copy()
+        day_stops.insert(0, "date", day)
+        rows.append(day_stops)
+    if not rows:
+        return pd.DataFrame(columns=["date", "trip_id", "stop_id"])
+    return pd.concat(rows, ignore_index=True)
+
+
+def _qualifying_prediction_keys(outcomes: pd.DataFrame, predictions: pd.DataFrame) -> set[tuple]:
+    """(service_date, trip_id, stop_id) keys with >=1 prediction 0-15 min before actual arrival."""
+    if predictions.empty or outcomes.empty:
+        return set()
+    actuals = outcomes[["service_date", "trip_id", "stop_id", "actual_arrival"]].dropna(subset=["actual_arrival"])
+    if actuals.empty:
+        return set()
+    merged = predictions.merge(actuals, on=["service_date", "trip_id", "stop_id"], how="inner")
+    time_to_actual = pd.to_datetime(merged["actual_arrival"]) - pd.to_datetime(merged["sampled_at"])
+    low, high = _COMPLETENESS_PREDICTION_WINDOW
+    qualifying = merged[(time_to_actual >= low) & (time_to_actual < high)]
+    return set(zip(qualifying["service_date"], qualifying["trip_id"], qualifying["stop_id"]))
+
+
+def _eta_completeness_percent(
+    feed: gk.Feed, start: date, end: date, outcomes: pd.DataFrame, predictions: pd.DataFrame
+) -> tuple[float | None, str | None]:
+    """ETA Completeness Benchmark: https://github.com/SwiftlyInc/ETA-Completeness-Benchmark
+
+    See specs/data-model.md#eta-completeness for how this maps onto this
+    project's GTFS + TIDES inputs.
+    """
+    scheduled = _scheduled_trip_stops(feed, start, end)
+    denominator = len(scheduled)
+    if denominator == 0:
+        return None, "no scheduled trip-stops in the configured date range"
+    if outcomes.empty:
+        return None, "no fetched TIDES file has a trip_stop_outcomes shape"
+
+    in_range = outcomes[(outcomes["service_date"] >= start) & (outcomes["service_date"] <= end)]
+    qualifying = _qualifying_prediction_keys(in_range, predictions)
+
+    keys = list(zip(in_range["service_date"], in_range["trip_id"], in_range["stop_id"]))
+    has_qualifying_prediction = pd.Series([k in qualifying for k in keys], index=in_range.index)
+    scheduled_keys = set(zip(scheduled["date"], scheduled["trip_id"], scheduled["stop_id"]))
+    in_scheduled = pd.Series([k in scheduled_keys for k in keys], index=in_range.index)
+
+    vehicle_assigned = in_range["vehicle_assigned"].astype(bool)
+    trip_cancelled = in_range["trip_cancelled"].astype(bool)
+    stop_skipped = in_range["stop_skipped"].astype(bool)
+    complete = (vehicle_assigned & has_qualifying_prediction) | trip_cancelled | stop_skipped
+
+    numerator = int((complete & in_scheduled).sum())
+    return 100 * numerator / denominator, None
+
+
+def _eta_accuracy(
+    outcomes: pd.DataFrame, predictions: pd.DataFrame, start: date, end: date
+) -> tuple[float | None, str | None, list[AccuracyBucket]]:
+    """ETA Accuracy Benchmark: https://github.com/TransitApp/ETA-Accuracy-Benchmark
+
+    See specs/data-model.md#eta-accuracy for how this maps onto this
+    project's GTFS + TIDES inputs.
+    """
+    if predictions.empty:
+        return None, "no fetched TIDES file has a predictions shape", []
+    if outcomes.empty:
+        return None, "no fetched TIDES file has a trip_stop_outcomes shape (needed for actual_arrival)", []
+
+    predictions_in_range = predictions[(predictions["service_date"] >= start) & (predictions["service_date"] <= end)]
+    if predictions_in_range.empty:
+        return None, "no predictions in the configured date range", []
+
+    actuals = outcomes[["service_date", "trip_id", "stop_id", "actual_arrival"]].dropna(subset=["actual_arrival"])
+    merged = predictions_in_range.merge(actuals, on=["service_date", "trip_id", "stop_id"], how="inner")
+    if merged.empty:
+        return None, "no predictions have a matching actual_arrival", []
+
+    sampled_at = pd.to_datetime(merged["sampled_at"])
+    actual_arrival = pd.to_datetime(merged["actual_arrival"])
+    predicted_arrival = pd.to_datetime(merged["predicted_arrival"])
+    time_to_actual = actual_arrival - sampled_at
+    variance = actual_arrival - predicted_arrival
+
+    buckets = []
+    bucket_accuracies = []
+    for label, low_min, high_min, early_tolerance, late_tolerance in _ACCURACY_BUCKETS:
+        in_bucket = (time_to_actual >= timedelta(minutes=low_min)) & (time_to_actual < timedelta(minutes=high_min))
+        bucket_variance = variance[in_bucket]
+        count = len(bucket_variance)
+        if count == 0:
+            buckets.append(AccuracyBucket(label=label, prediction_count=0, accurate_count=0, accuracy_percent=None))
+            continue
+        accurate = int(((bucket_variance >= -early_tolerance) & (bucket_variance <= late_tolerance)).sum())
+        accuracy_percent = 100 * accurate / count
+        buckets.append(
+            AccuracyBucket(label=label, prediction_count=count, accurate_count=accurate, accuracy_percent=accuracy_percent)
+        )
+        bucket_accuracies.append(accuracy_percent)
+
+    if not bucket_accuracies:
+        return None, "no predictions fell within any of the four accuracy time buckets", buckets
+    return sum(bucket_accuracies) / len(bucket_accuracies), None, buckets
+
+
+def _build_tides_benchmarks(feed: gk.Feed, tides_files: list[Path], start: date, end: date) -> TidesBenchmarks:
+    performed = otp.read_tides_performed(tides_files)
     scheduled_dt = pd.to_datetime(performed["scheduled_departure"])
     in_range = (scheduled_dt.dt.date >= start) & (scheduled_dt.dt.date <= end)
     performed = performed[in_range]
     performed = performed[~performed["cancelled"].astype(bool)]
-
     trips_performed = len(performed)
 
-    realtime_completeness_percent: float | None = None
-    realtime_completeness_note: str | None = None
-    if "realtime_data_available" not in performed.columns:
-        realtime_completeness_note = "no fetched TIDES file has a realtime_data_available column"
-    elif trips_performed == 0:
-        realtime_completeness_note = "no performed trips in the configured date range"
-    else:
-        # Rows where the column is unset (e.g. concatenated from a file
-        # that lacks it) are excluded rather than counted either way —
-        # astype(bool) on a NaN silently reads as True, which would
-        # misreport "unknown" as "available".
-        known = performed[performed["realtime_data_available"].notna()]
-        if known.empty:
-            realtime_completeness_note = "no performed trips in range have a realtime_data_available value"
-        else:
-            available = known["realtime_data_available"].astype(bool)
-            realtime_completeness_percent = 100 * available.sum() / len(known)
+    outcomes = _read_trip_stop_outcomes(tides_files)
+    predictions = _read_predictions(tides_files)
 
-    eta_accuracy_percent: float | None = None
-    eta_accuracy_note: str | None = None
-    if "predicted_departure" not in performed.columns:
-        eta_accuracy_note = "no fetched TIDES file has a predicted_departure column"
-    else:
-        predicted = performed[performed["predicted_departure"].notna() & (performed["predicted_departure"] != "")]
-        if predicted.empty:
-            eta_accuracy_note = "no performed trips in range have a predicted_departure value"
-        else:
-            delta = (
-                pd.to_datetime(predicted["predicted_departure"]) - pd.to_datetime(predicted["actual_departure"])
-            ).abs()
-            within_tolerance = delta <= ETA_ACCURACY_TOLERANCE
-            eta_accuracy_percent = 100 * within_tolerance.sum() / len(predicted)
+    completeness_percent, completeness_note = _eta_completeness_percent(feed, start, end, outcomes, predictions)
+    accuracy_percent, accuracy_note, accuracy_buckets = _eta_accuracy(outcomes, predictions, start, end)
 
     return TidesBenchmarks(
         trips_performed=trips_performed,
-        realtime_completeness_percent=realtime_completeness_percent,
-        eta_accuracy_percent=eta_accuracy_percent,
-        realtime_completeness_note=realtime_completeness_note,
-        eta_accuracy_note=eta_accuracy_note,
+        realtime_completeness_percent=completeness_percent,
+        realtime_completeness_note=completeness_note,
+        eta_accuracy_percent=accuracy_percent,
+        eta_accuracy_note=accuracy_note,
+        eta_accuracy_buckets=accuracy_buckets,
     )
 
 
@@ -175,7 +327,7 @@ def build_dashboard_data(
 
     tides_benchmarks = None
     if tides_files and date_range:
-        tides_benchmarks = _build_tides_benchmarks(tides_files, date_range[0], date_range[1])
+        tides_benchmarks = _build_tides_benchmarks(feed, tides_files, date_range[0], date_range[1])
 
     return DashboardData(
         agency=agency,
@@ -316,7 +468,7 @@ def _stat_tile(label: str, value: str, note: str | None = None) -> str:
 """.strip()
 
 
-def _data_table(headers: list[str], rows: list[tuple[str, str]]) -> str:
+def _data_table(headers: list[str], rows: list[tuple]) -> str:
     head = "".join(f"<th>{escape(h)}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{escape(str(c))}</td>" for c in row) + "</tr>" for row in rows)
     return f"""
@@ -358,7 +510,7 @@ def render_html(data: DashboardData) -> str:
             [
                 _stat_tile("Trips performed", str(data.tides.trips_performed)),
                 _stat_tile(
-                    "Realtime completeness",
+                    "ETA completeness",
                     _percent(data.tides.realtime_completeness_percent),
                     data.tides.realtime_completeness_note,
                 ),
@@ -369,16 +521,24 @@ def render_html(data: DashboardData) -> str:
                 ),
             ]
         )
+        bucket_rows = [
+            (b.label, b.prediction_count, _percent(b.accuracy_percent)) for b in data.tides.eta_accuracy_buckets
+        ]
+        bucket_table = _data_table(["Time bucket", "Predictions", "Accuracy"], bucket_rows)
         tides_section = f"""
 <section class="section">
   <h2>TIDES benchmarks</h2>
   <p class="section-note">
-    Trips performed and two benchmark stats over the configured
-    date_range. The realtime completeness and ETA accuracy columns are
-    based on an <strong>unverified assumption</strong> about the TIDES
-    CSV shape — see
-    specs/data-model.md#tides-historic-data-on-disk-fetched.
+    Trips performed, plus the
+    <a href="https://github.com/SwiftlyInc/ETA-Completeness-Benchmark">ETA Completeness Benchmark</a>
+    and
+    <a href="https://github.com/TransitApp/ETA-Accuracy-Benchmark">ETA Accuracy Benchmark</a>
+    scores over the configured date_range. Both rest on an
+    <strong>unverified assumption</strong> about the TIDES CSV shape —
+    see specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files.
   </p>
+  <h3 class="subsection-title">ETA accuracy by time bucket</h3>
+  {bucket_table}
 </section>
 """.strip()
     else:
@@ -448,6 +608,7 @@ def render_html(data: DashboardData) -> str:
     margin-bottom: 20px;
   }}
   .section h2 {{ font-size: 1.05rem; margin: 0 0 12px; }}
+  .subsection-title {{ font-size: 0.85rem; color: var(--text-secondary); margin: 16px 0 6px; font-weight: 600; }}
   .section-note {{ color: var(--text-secondary); font-size: 0.9rem; }}
   .stat-row {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }}
   .stat-tile {{
