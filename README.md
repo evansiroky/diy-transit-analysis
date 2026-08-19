@@ -30,17 +30,39 @@ pip install -e ".[dev]"
 ## Usage
 
 Copy [`config/example.yaml`](config/example.yaml), point it at your
-agency's GTFS feed and TIDES bucket, then:
+agency's GTFS feed (and, optionally, its TIDES bucket + reporting window),
+then run everything in one command:
 
 ```sh
-diy-transit-analysis fetch-gtfs  --config config/example.yaml --agency SacRT
-diy-transit-analysis fetch-tides --config config/example.yaml --agency SacRT
-diy-transit-analysis report otp  --config config/example.yaml --agency SacRT
+diy-transit-analysis run --config config/example.yaml --agency SacRT
 ```
 
-This writes fetched data and the report CSV under `output/` (gitignored).
-`fetch-tides` requires a Google Cloud project with billing enabled — the
-TIDES bucket is requester-pays (see the Status section above).
+`run` fetches the GTFS Schedule feed, generates the GTFS-only
+`schedule-stats` report, and — only if the agency's config includes a
+`tides:` block and a `date_range:` block — also fetches TIDES data and
+generates the `otp` (on-time-performance) report, printing what it did or
+skipped (and why) as it goes.
+
+An agency that only configures `gtfs_schedule_url` (no `tides:`, no
+`date_range:` — see the commented-out `SmallTownTransit` example in
+`config/example.yaml`) is a fully valid config: `run` fetches its GTFS
+feed and produces `schedule-stats` (route-level trip counts, service
+span, stop counts — no TIDES access or GCP project required).
+
+The individual pipeline stages are also available standalone:
+
+```sh
+diy-transit-analysis fetch-gtfs            --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-tides           --config config/example.yaml --agency SacRT
+diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
+diy-transit-analysis report otp            --config config/example.yaml --agency SacRT
+```
+
+This writes fetched data and report CSVs under `output/` (gitignored).
+`fetch-tides` and `report otp` require a `tides:`/`date_range:`-configured
+agency; `fetch-tides` also requires a Google Cloud project with billing
+enabled, since the TIDES bucket is requester-pays (see the Status section
+above).
 
 ## Development
 

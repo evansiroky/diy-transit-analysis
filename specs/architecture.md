@@ -65,6 +65,15 @@ agencies:
     date_range:
       start: "2026-01-01"
       end: "2026-03-31"
+
+  # A GTFS-only agency: `tides:` and `date_range:` are both optional blocks
+  # (see specs/behaviors/config-validation.md). This agency supports
+  # `fetch-gtfs`, `report schedule-stats`, and the GTFS-only portion of
+  # `run` — but not `fetch-tides` or `report otp`, since those need a
+  # requester-pays GCP project and a reporting window this agency hasn't
+  # configured.
+  SmallTownTransit:
+    gtfs_schedule_url: "https://example.org/gtfs/current.zip"
 ```
 
 Adding an agency is adding a new top-level key under `agencies:` — no code
@@ -141,13 +150,44 @@ installed console script rather than separate top-level scripts, since
 this project is packaged (`pip install`-able) rather than run in place:
 
 ```
-diy-transit-analysis fetch-gtfs   --config config/example.yaml --agency SacRT
-diy-transit-analysis fetch-tides  --config config/example.yaml --agency SacRT
-diy-transit-analysis report otp   --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-gtfs           --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-tides          --config config/example.yaml --agency SacRT
+diy-transit-analysis report otp           --config config/example.yaml --agency SacRT
+diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
+diy-transit-analysis run                  --config config/example.yaml --agency SacRT
 ```
 
-Each subcommand reads the same config file and an `--agency` selector;
-`report otp` (on-time performance) is the MVP's one report type.
+Each subcommand reads the same config file and an `--agency` selector.
+`report otp` (on-time performance) and `report schedule-stats` (GTFS-only
+scheduled-service stats, see
+[data-model.md#gtfs-schedule-stats-report-output](data-model.md#gtfs-schedule-stats-report-output))
+are the MVP's two report types.
+
+### The `run` subcommand
+
+`run` is the one-command entry point most users reach for: it composes the
+individual fetch/report subcommands above so a user doesn't have to know
+the pipeline order or which reports their config supports. For the
+selected `--agency`, it:
+
+1. Always fetches the GTFS Schedule feed (`fetch-gtfs`'s behavior).
+2. Fetches TIDES historic data (`fetch-tides`'s behavior) **only if** the
+   agency has a `tides:` block configured.
+3. Always generates the `schedule-stats` report — it only needs the GTFS
+   feed just fetched, per
+   [behaviors/config-validation.md](behaviors/config-validation.md)'s
+   optional-`tides`/`date_range` rule.
+4. Generates the `otp` report **only if** the agency has both `tides:`
+   and `date_range:` configured (both are required for that report's
+   join). Otherwise `run` prints which report(s) it skipped and why,
+   rather than failing the whole command — an agency that only configured
+   `gtfs_schedule_url` gets a complete, successful `run` that produces its
+   one available report.
+
+`run` never partially fails silently: every step it takes or skips is
+printed, and any step it does attempt fails loudly the same way the
+equivalent standalone subcommand would (see
+[behaviors/config-validation.md](behaviors/config-validation.md)).
 
 ## Testing
 

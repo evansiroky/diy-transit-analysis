@@ -31,8 +31,13 @@ def test_load_config_success(tmp_path: Path):
 
 
 def test_load_config_reports_every_missing_field(tmp_path: Path):
+    # tides: and date_range: are both present but incomplete here, so both
+    # blocks' own required sub-fields must still be reported — even though
+    # (per specs/behaviors/config-validation.md) omitting either block
+    # entirely is now valid, an agency that opts into a block must still
+    # fill it out.
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("agencies:\n  Foo:\n    tides:\n      gcs_bucket: x\n")
+    config_path.write_text("agencies:\n  Foo:\n    tides:\n      gcs_bucket: x\n    date_range:\n      start: '2026-01-01'\n")
 
     with pytest.raises(ConfigError) as exc_info:
         load_config(config_path)
@@ -41,7 +46,7 @@ def test_load_config_reports_every_missing_field(tmp_path: Path):
     assert "output_dir" in message
     assert "gtfs_schedule_url" in message
     assert "gcp_billing_project" in message
-    assert "date_range" in message
+    assert "date_range.end" in message
 
 
 def test_unknown_agency_selector_fails(tmp_path: Path):
@@ -66,4 +71,35 @@ def test_start_after_end_rejected(tmp_path: Path):
     config_path.write_text(GOOD_CONFIG.replace('start: "2026-01-01"', 'start: "2026-06-01"'))
 
     with pytest.raises(ConfigError, match="start"):
+        load_config(config_path)
+
+
+def test_gtfs_only_agency_loads_with_no_tides_or_date_range(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "output_dir: output\n"
+        "agencies:\n"
+        "  Bar:\n"
+        '    gtfs_schedule_url: "https://example.org/gtfs.zip"\n'
+    )
+
+    config = load_config(config_path)
+    agency = get_agency(config, "Bar")
+
+    assert agency.tides is None
+    assert agency.date_range is None
+
+
+def test_tides_block_still_validates_its_own_fields_when_present(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "output_dir: output\n"
+        "agencies:\n"
+        "  Bar:\n"
+        '    gtfs_schedule_url: "https://example.org/gtfs.zip"\n'
+        "    tides:\n"
+        "      gcs_bucket: bucket\n"
+    )
+
+    with pytest.raises(ConfigError, match="gcp_billing_project"):
         load_config(config_path)

@@ -25,3 +25,11 @@ agencies:
     date_range:
       start: "2026-07-01"
       end: "2026-07-07"
+
+  # A GTFS-only agency: tides: and date_range: are both optional blocks
+  # (specs/behaviors/config-validation.md). This agency supports
+  # `fetch-gtfs`, `report schedule-stats`, and `run` (which will skip the
+  # TIDES fetch and OTP report and say so) — but not `fetch-tides` or
+  # `report otp`.
+  # SmallTownTransit:
+  #   gtfs_schedule_url: "https://example.org/gtfs/current.zip"

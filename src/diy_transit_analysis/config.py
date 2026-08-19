@@ -46,8 +46,8 @@ class DateRange:
 class AgencyConfig:
     name: str
     gtfs_schedule_url: str
-    tides: TidesConfig
-    date_range: DateRange
+    tides: TidesConfig | None
+    date_range: DateRange | None
 
 
 @dataclass(frozen=True)
@@ -127,10 +127,23 @@ def _parse_agency(name: str, raw: object, *, errors: list[str]) -> AgencyConfig 
         )
         gtfs_schedule_url = None
 
-    tides = _parse_tides(raw.get("tides"), field=f"{field}.tides", errors=errors)
-    date_range = _parse_date_range(raw.get("date_range"), field=f"{field}.date_range", errors=errors)
+    # tides: and date_range: are each whole-block optional, independently
+    # of each other (specs/behaviors/config-validation.md) — only parse
+    # (and require their internal fields) when the agency configured the
+    # block at all, so a GTFS-only agency needs neither.
+    tides_ok = True
+    tides: TidesConfig | None = None
+    if "tides" in raw:
+        tides = _parse_tides(raw.get("tides"), field=f"{field}.tides", errors=errors)
+        tides_ok = tides is not None
 
-    if gtfs_schedule_url is None or tides is None or date_range is None:
+    date_range_ok = True
+    date_range: DateRange | None = None
+    if "date_range" in raw:
+        date_range = _parse_date_range(raw.get("date_range"), field=f"{field}.date_range", errors=errors)
+        date_range_ok = date_range is not None
+
+    if gtfs_schedule_url is None or not tides_ok or not date_range_ok:
         return None
 
     return AgencyConfig(
