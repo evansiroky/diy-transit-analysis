@@ -13,11 +13,13 @@ Top-level YAML document, loaded by `diy_transit_analysis.config`.
 | `output_dir`                        | string | yes      | Root dir for all fetched data + reports. Relative paths resolve from the config file's own directory. |
 | `agencies.<name>`                   | map    | yes, ≥1  | Key is a free-form agency identifier, e.g. `SacRT`. Used to namespace output paths. |
 | `agencies.<name>.gtfs_schedule_url` | string | yes      | Public URL to a GTFS Schedule `.zip`. |
-| `agencies.<name>.tides.gcs_bucket`  | string | yes      | GCS bucket (or bucket+prefix) holding this agency's TIDES data. **Assumed shape — see architecture.md "TIDES historic data access".** |
-| `agencies.<name>.tides.gcp_billing_project` | string | yes | The *user's own* GCP project ID, billed for requester-pays egress. Never committed with real credentials — this is a project ID, not a secret, but the config file itself should still not be treated as safe to publish if it contains a real project ID tied to billing. |
+| `agencies.<name>.tides`             | map    | no       | Whole block is optional — omit it entirely for a GTFS-only agency (see [behaviors/config-validation.md](behaviors/config-validation.md)). An agency without `tides:` supports `fetch-gtfs`, `report schedule-stats`, and the GTFS-only portion of `run`, but not `fetch-tides` or `report otp`. |
+| `agencies.<name>.tides.gcs_bucket`  | string | yes, if `tides:` present | GCS bucket (or bucket+prefix) holding this agency's TIDES data. **Assumed shape — see architecture.md "TIDES historic data access".** |
+| `agencies.<name>.tides.gcp_billing_project` | string | yes, if `tides:` present | The *user's own* GCP project ID, billed for requester-pays egress. Never committed with real credentials — this is a project ID, not a secret, but the config file itself should still not be treated as safe to publish if it contains a real project ID tied to billing. |
 | `agencies.<name>.tides.agency_prefix` | string | no     | Object-key prefix within the bucket, if the bucket is shared across agencies. |
-| `agencies.<name>.date_range.start`  | date (`YYYY-MM-DD`) | yes | Inclusive start of the reporting window. |
-| `agencies.<name>.date_range.end`    | date (`YYYY-MM-DD`) | yes | Inclusive end of the reporting window. |
+| `agencies.<name>.date_range`        | map    | no       | Whole block is optional, independently of `tides:`. Required only for `report otp`, which needs a reporting window; `report schedule-stats` needs no date range at all (see [below](#gtfs-schedule-stats-report-output)). |
+| `agencies.<name>.date_range.start`  | date (`YYYY-MM-DD`) | yes, if `date_range:` present | Inclusive start of the reporting window. |
+| `agencies.<name>.date_range.end`    | date (`YYYY-MM-DD`) | yes, if `date_range:` present | Inclusive end of the reporting window. |
 
 See [behaviors/config-validation.md](behaviors/config-validation.md) for
 validation rules.
@@ -73,3 +75,41 @@ Every value in this table must be reproducible from the same GTFS +
 TIDES inputs (per
 [principles.md#reproducibility-over-cleverness](principles.md#reproducibility-over-cleverness))
 — no randomness, no unlogged interpolation of missing data.
+
+## GTFS Schedule stats report (output)
+
+CSV, one row per **route**, computed entirely from a fetched GTFS Schedule
+feed — no TIDES data and no user-configured `date_range` required (unlike
+the on-time-performance report above). This is what `report
+schedule-stats` and the GTFS-only portion of `run` produce for an agency
+that has configured nothing beyond `gtfs_schedule_url`.
+
+Since GTFS feeds don't carry a natural "reporting window" of their own,
+this report scopes its per-route trip/frequency stats to the feed's own
+**representative week**: the first Monday–Sunday week (or initial segment
+thereof) for which the feed's calendar is valid. This keeps the report
+fully reproducible from the feed alone (per
+[principles.md#reproducibility-over-cleverness](principles.md#reproducibility-over-cleverness))
+— it never depends on the wall-clock date the report happens to be run.
+
+| Column                       | Type    | Meaning |
+|-------------------------------|---------|---------|
+| `agency`                      | string  | Agency name from config. |
+| `feed_start_date`              | date    | Earliest date the feed's calendar (`calendar`/`calendar_dates`) is valid for. |
+| `feed_end_date`                | date    | Latest such date. |
+| `route_id`                     | string  | GTFS `route_id`. |
+| `route_short_name`             | string  | GTFS `route_short_name` (falls back to `route_id` if blank). |
+| `route_type`                   | integer | GTFS `route_type` (e.g. `3` = bus, `2` = rail). |
+| `stop_count`                   | integer | Count of distinct stops served by any trip on this route, across the whole feed. |
+| `representative_week_start`    | date    | Start (Monday) of the representative week used for the columns below. |
+| `service_day_count`            | integer | Number of days within the representative week (0–7) on which the route has at least one scheduled trip. |
+| `trip_count`                   | integer | Total scheduled trips for the route across the representative week. |
+| `avg_trips_per_service_day`    | float   | `trip_count / service_day_count`, `null` if `service_day_count == 0`. |
+| `first_departure_time`         | string (`HH:MM:SS`) | Earliest scheduled departure time-of-day for the route, across the whole feed. Per GTFS convention, hours may exceed `24:00:00` for a trip that departs after midnight relative to its service day. |
+| `last_departure_time`          | string (`HH:MM:SS`) | Latest scheduled departure time-of-day for the route, across the whole feed. Same `HH` convention as above. |
+
+If the feed has no calendar information at all (`calendar` and
+`calendar_dates` both empty), the report cannot be computed — this fails
+loudly per
+[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions)
+rather than emitting a report of nulls.

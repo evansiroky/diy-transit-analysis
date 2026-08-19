@@ -11,8 +11,9 @@ silently skips an invalid agency entry.
 
 ## Applies To
 
-All CLI subcommands (`fetch-gtfs`, `fetch-tides`, `report otp`) and the
-`diy_transit_analysis.config.load_config()` function they share.
+All CLI subcommands (`fetch-gtfs`, `fetch-tides`, `report otp`, `report
+schedule-stats`, `run`) and the `diy_transit_analysis.config.load_config()`
+function they share.
 
 ## Details
 
@@ -20,7 +21,18 @@ All CLI subcommands (`fetch-gtfs`, `fetch-tides`, `report otp`) and the
   `data-model.md#config-file`) fail validation, listing every missing
   field found (not just the first) so a user can fix them all in one
   pass.
-- `date_range.start` must be `<= date_range.end`.
+- `tides:` and `date_range:` are each **whole-block optional**, per
+  agency, independently of each other — an agency may configure neither,
+  either, or both. This is what makes a GTFS-only agency (just
+  `gtfs_schedule_url:`) a valid config, per
+  [../principles.md#config-driven-agency-onboarding](../principles.md#config-driven-agency-onboarding):
+  no code change, and no unrelated config (a GCP project, a reporting
+  window) is required just to fetch and describe a schedule. When a block
+  *is* present, every field normally required within it is still required
+  — e.g. a `tides:` block with `gcs_bucket` but no `gcp_billing_project`
+  still fails validation.
+- `date_range.start` must be `<= date_range.end` (when `date_range:` is
+  present).
 - `gtfs_schedule_url` and any URL field must be `http://` or `https://` —
   no local file paths, no other schemes (keeps the "public data only"
   principle mechanically enforced rather than just documented; see
@@ -31,6 +43,14 @@ All CLI subcommands (`fetch-gtfs`, `fetch-tides`, `report otp`) and the
 - Validation does not attempt to reach any network endpoint (no "does
   this URL 200" check) — that's the fetch step's job, not config
   validation's. Config validation is purely structural/local.
+- A subcommand that needs a block the selected agency didn't configure
+  (`fetch-tides` or `report otp` without `tides:`; `report otp` without
+  `date_range:`) is **not** a config-validation failure — the config
+  itself is valid. It's a command-level error, raised when that
+  subcommand runs, naming exactly which block is missing and for which
+  agency. `run` treats the same situation as a report to skip (with an
+  explanation printed), not an error — see
+  [../architecture.md#the-run-subcommand](../architecture.md#the-run-subcommand).
 
 ## Principles
 

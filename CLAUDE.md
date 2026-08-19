@@ -15,10 +15,15 @@ YAML config keyed by agency name (see `config/example.yaml`).
 
 ```sh
 pip install -e .
-diy-transit-analysis fetch-gtfs  --config config/example.yaml --agency SacRT
-diy-transit-analysis fetch-tides --config config/example.yaml --agency SacRT
-diy-transit-analysis report otp  --config config/example.yaml --agency SacRT
+diy-transit-analysis run --config config/example.yaml --agency SacRT
 ```
+
+`run` fetches GTFS (+ TIDES if the agency configured a `tides:` block) and
+generates every report the agency's config supports — always
+`schedule-stats` (GTFS-only, no date range needed), plus `otp` if
+`tides:`/`date_range:` are both configured. The individual stages
+(`fetch-gtfs`, `fetch-tides`, `report otp`, `report schedule-stats`) are
+still available standalone — see `specs/architecture.md#cli-entrypoint-shape`.
 
 ## Spec-driven development (specops)
 
