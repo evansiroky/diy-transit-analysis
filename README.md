@@ -16,7 +16,10 @@ Google Cloud Storage bucket is laid out — see
 [`specs/architecture.md`](specs/architecture.md#tides-historic-data-access)
 and the module docstring in
 [`src/diy_transit_analysis/tides/historic.py`](src/diy_transit_analysis/tides/historic.py)
-before relying on it.
+before relying on it. The `report html` dashboard's two TIDES benchmarks
+(realtime completeness, ETA accuracy) rest on an even newer, similarly
+**unverified** guess at two additional TIDES CSV columns — see
+[`specs/data-model.md`](specs/data-model.md#tides-historic-data-on-disk-fetched).
 
 This project follows [spec-driven development](CLAUDE.md) — `specs/` is
 the source of truth for intended behavior, `plans/` tracks work in flight.
@@ -38,16 +41,25 @@ diy-transit-analysis run --config config/example.yaml --agency SacRT
 ```
 
 `run` fetches the GTFS Schedule feed, generates the GTFS-only
-`schedule-stats` report, and — only if the agency's config includes a
-`tides:` block and a `date_range:` block — also fetches TIDES data and
-generates the `otp` (on-time-performance) report, printing what it did or
-skipped (and why) as it goes.
+`schedule-stats` and `html` (dashboard) reports, and — only if the
+agency's config includes a `tides:` block and a `date_range:` block —
+also fetches TIDES data and generates the `otp` (on-time-performance)
+report, printing what it did or skipped (and why) as it goes.
 
 An agency that only configures `gtfs_schedule_url` (no `tides:`, no
 `date_range:` — see the commented-out `SmallTownTransit` example in
 `config/example.yaml`) is a fully valid config: `run` fetches its GTFS
-feed and produces `schedule-stats` (route-level trip counts, service
-span, stop counts — no TIDES access or GCP project required).
+feed and produces `schedule-stats` and `html` (route-level trip counts,
+service span, stop counts, vehicles-in-service — no TIDES access or GCP
+project required).
+
+`report html` writes a single self-contained, offline-viewable HTML
+dashboard — no external scripts/fonts/CDN — combining GTFS-only schedule
+stats (vehicles in service by time of day + peak vehicles, scheduled
+trips per service day) with, when TIDES is configured and fetched,
+trips-performed and two benchmark stats (realtime completeness, ETA
+accuracy — see the Status section below on the TIDES assumptions behind
+these two).
 
 The individual pipeline stages are also available standalone:
 
@@ -56,13 +68,16 @@ diy-transit-analysis fetch-gtfs            --config config/example.yaml --agency
 diy-transit-analysis fetch-tides           --config config/example.yaml --agency SacRT
 diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
 diy-transit-analysis report otp            --config config/example.yaml --agency SacRT
+diy-transit-analysis report html           --config config/example.yaml --agency SacRT
 ```
 
-This writes fetched data and report CSVs under `output/` (gitignored).
+This writes fetched data and report files under `output/` (gitignored).
 `fetch-tides` and `report otp` require a `tides:`/`date_range:`-configured
 agency; `fetch-tides` also requires a Google Cloud project with billing
 enabled, since the TIDES bucket is requester-pays (see the Status section
-above).
+above). `report html` works for any agency, showing its TIDES benchmarks
+section only when `tides:`/`date_range:` are configured and already
+fetched.
 
 ## Development
 

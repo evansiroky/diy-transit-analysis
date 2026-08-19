@@ -45,6 +45,33 @@ this project reads (at minimum: scheduled vs. actual trip start/end time,
 trip/stop identifiers, and a cancelled/completed flag, since those are
 what on-time-performance and cancellation-rate calculations need).
 
+**ASSUMED, NOT VERIFIED** — the "trips performed" CSV consumed by
+`report otp` and `report html`'s TIDES benchmarks (see
+[below](#static-html-dashboard-report-output)) is read against this
+column set:
+
+| Column | Required | Meaning |
+|--------|----------|---------|
+| `route_id`, `trip_id` | yes | Identify the trip, matched against GTFS `route_id`. |
+| `scheduled_departure`, `actual_departure` | yes | Used for the on-time-performance join (see below). |
+| `cancelled` | yes | Excludes the row from `performed_trip_count` when true. |
+| `realtime_data_available` | no | Boolean-ish (`true`/`false`, `1`/`0`) — whether GTFS-Realtime data was published for this trip while it operated. Backs `realtime_completeness_percent`. |
+| `predicted_departure` | no | The GTFS-Realtime predicted departure time recorded for this trip. Backs `eta_accuracy_percent`. |
+
+The first five columns are the same ones `report otp` has always required
+(see below) and are a **hard requirement** — their absence fails the read
+loudly, per
+[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions).
+The two benchmark columns are newer and **optional**: unlike the first
+five, they have not been checked against any real fetched TIDES sample
+(see `plans/data-fetch.md`'s still-open bucket-verification Follow-up).
+If a fetched TIDES file lacks one, the corresponding `report html`
+benchmark is reported as `null` with a note that the column wasn't found
+— not a hard failure — so a real-but-incomplete TIDES sample doesn't
+block the rest of the dashboard. Once real TIDES data is fetchable, this
+table (and the benchmark formulas below) need re-verification against it,
+same as every other TIDES assumption in this project.
+
 ## On-time performance report (output)
 
 CSV, one row per **route** for the configured date range (the MVP's
@@ -113,3 +140,74 @@ If the feed has no calendar information at all (`calendar` and
 loudly per
 [principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions)
 rather than emitting a report of nulls.
+
+## Static HTML dashboard report (output)
+
+A single self-contained `.html` file — no external stylesheet, script, or
+font requests, so it renders correctly opened straight from disk or
+emailed as an attachment (per
+[principles.md#local-files-as-the-unit-of-state](principles.md#local-files-as-the-unit-of-state)).
+Produced by `report html` and by `run` (always — its GTFS-only sections
+need nothing beyond `gtfs_schedule_url`, matching `report
+schedule-stats`'s config requirements). Written to
+`<output_dir>/reports/<agency>/dashboard-<feed_start>-<feed_end>.html`.
+
+The page has two parts:
+
+### Schedule section (always present)
+
+- **Feed overview**: agency name, `feed_start_date`/`feed_end_date` (same
+  meaning as in [the schedule stats report](#gtfs-schedule-stats-report-output)),
+  route/trip/stop counts.
+- **Vehicles in service by time of day**, for the busiest date within the
+  feed's [representative week](#gtfs-schedule-stats-report-output) (the
+  same representative week the schedule stats report uses, so the two
+  reports agree on which week is "representative"): a time-of-day series
+  of the number of trips concurrently in service, plus the two headline
+  numbers — `peak_vehicles` (the maximum concurrent count that day) and
+  `peak_time` (when it's first reached).
+- **Scheduled trips per service day**, across every date in
+  `[feed_start_date, feed_end_date]` on which the feed schedules at least
+  one trip: a `date -> trip_count` series (count of trips starting that
+  date). Dates with zero scheduled service are omitted, not shown as
+  zero-height points.
+
+Both series are computed straight from the fetched GTFS feed, so — like
+the schedule stats report — they're fully reproducible from the feed
+alone and never depend on the wall-clock date the report is run.
+
+### TIDES benchmarks section (conditional)
+
+Present only when the agency has both `tides:` and `date_range:`
+configured *and* TIDES data has already been fetched (same precondition
+`report otp` already enforces — see
+[behaviors/config-validation.md](behaviors/config-validation.md)). When
+the agency didn't configure `tides:`/`date_range:` at all, the section is
+omitted with a note saying so (matching `run`'s "skip and say why"
+behavior); when it's configured but not yet fetched, `report html` fails
+the same way `report otp` does (run `fetch-tides` first) rather than
+silently omitting a section the user did ask for.
+
+All three values are computed over the configured `date_range`, from the
+same fetched TIDES CSV(s) `report otp` reads (excluding cancelled trips,
+per [the OTP report](#on-time-performance-report-output)):
+
+| Stat | Meaning |
+|------|---------|
+| `trips_performed` | Count of performed (non-cancelled) trips in the window, system-wide (not per-route). |
+| `realtime_completeness_percent` | Of performed trips with a non-null `realtime_data_available` value, the percent that are `true` (see [above](#tides-historic-data-on-disk-fetched)). Rows where the value is unknown (e.g. concatenated from a fetched file that lacks the column) are excluded from both the numerator and the denominator, not counted as unavailable. `null` if `trips_performed == 0`, no fetched file carries the column at all, or every performed trip's value is unknown. |
+| `eta_accuracy_percent` | Of performed trips with a non-null `predicted_departure`, the percent where `abs(predicted_departure - actual_departure) <= 3 minutes` (fixed MVP constant, same fixed-threshold precedent as the OTP report's on-time window). `null` if no fetched file carries the `predicted_departure` column, or none of the performed trips have a prediction. |
+
+## Principles
+
+**Inherited** — project principles from `principles.md` that especially
+bite here:
+- [Fail loud on unverified assumptions](principles.md#fail-loud-on-unverified-assumptions)
+  — the TIDES benchmark columns above are the newest, least-verified part
+  of this project's data model; every value derived from them says so
+  (`null` + a note) rather than presenting a confident-looking number.
+- [Reproducibility over cleverness](principles.md#reproducibility-over-cleverness)
+  — both the schedule stats report and the HTML dashboard's schedule
+  section anchor on the feed's own representative week rather than
+  today's date, so re-running against the same fetched feed always
+  produces the same numbers.

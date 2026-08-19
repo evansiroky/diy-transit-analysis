@@ -10,7 +10,7 @@ bucket layout/format has not been verified (see
 diy_transit_analysis.tides.historic and
 specs/architecture.md#tides-historic-data-access). Once real fetched TIDES
 data is available, confirm these column names and adjust
-_read_tides_performed accordingly.
+read_tides_performed accordingly.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _ASSUMED_TIDES_COLUMNS = {
 }
 
 
-def _read_tides_performed(tides_files: list[Path]) -> pd.DataFrame:
+def read_tides_performed(tides_files: list[Path]) -> pd.DataFrame:
     """Read and concatenate the fetched TIDES "trips performed" CSV(s).
 
     See this module's docstring for the assumed column shape.
@@ -99,7 +99,7 @@ def build_otp_report(
     """
     scheduled_counts = _scheduled_trip_counts(feed, start, end)
 
-    performed = _read_tides_performed(tides_files)
+    performed = read_tides_performed(tides_files)
 
     # tides.historic.fetch_historic() does not itself filter by date range
     # (the real TIDES bucket layout is unverified — see

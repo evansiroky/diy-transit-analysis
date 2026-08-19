@@ -150,18 +150,36 @@ installed console script rather than separate top-level scripts, since
 this project is packaged (`pip install`-able) rather than run in place:
 
 ```
-diy-transit-analysis fetch-gtfs           --config config/example.yaml --agency SacRT
-diy-transit-analysis fetch-tides          --config config/example.yaml --agency SacRT
-diy-transit-analysis report otp           --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-gtfs            --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-tides           --config config/example.yaml --agency SacRT
+diy-transit-analysis report otp            --config config/example.yaml --agency SacRT
 diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
-diy-transit-analysis run                  --config config/example.yaml --agency SacRT
+diy-transit-analysis report html           --config config/example.yaml --agency SacRT
+diy-transit-analysis run                   --config config/example.yaml --agency SacRT
 ```
 
 Each subcommand reads the same config file and an `--agency` selector.
-`report otp` (on-time performance) and `report schedule-stats` (GTFS-only
+`report otp` (on-time performance), `report schedule-stats` (GTFS-only
 scheduled-service stats, see
-[data-model.md#gtfs-schedule-stats-report-output](data-model.md#gtfs-schedule-stats-report-output))
-are the MVP's two report types.
+[data-model.md#gtfs-schedule-stats-report-output](data-model.md#gtfs-schedule-stats-report-output)),
+and `report html` (a static HTML dashboard combining schedule and, when
+available, TIDES stats — see
+[data-model.md#static-html-dashboard-report-output](data-model.md#static-html-dashboard-report-output))
+are the MVP's three report types.
+
+### The `report html` dashboard's rendering approach
+
+`report html` renders its own charts as inline SVG built directly by
+Python string formatting — no charting library, no JavaScript framework,
+no CDN font or script. This keeps the output file self-contained per
+[principles.md#local-files-as-the-unit-of-state](principles.md#local-files-as-the-unit-of-state):
+it opens correctly from a `file://` URL or an email attachment with zero
+network requests. A small amount of inline, dependency-free `<script>` is
+used only for hover/crosshair affordances on the two charts — every value
+it can show is also present in a plain HTML `<table>` on the same page
+(inside a collapsed `<details>`), so nothing is reachable only by
+hovering, and the page degrades to fully static (still fully readable)
+with JavaScript disabled.
 
 ### The `run` subcommand
 
@@ -183,6 +201,10 @@ selected `--agency`, it:
    rather than failing the whole command — an agency that only configured
    `gtfs_schedule_url` gets a complete, successful `run` that produces its
    one available report.
+5. Always generates the `html` dashboard report — its schedule section
+   needs only the GTFS feed, same as `schedule-stats`; its TIDES
+   benchmarks section is included automatically when step 4 ran, and
+   omitted (with a note) otherwise.
 
 `run` never partially fails silently: every step it takes or skips is
 printed, and any step it does attempt fails loudly the same way the

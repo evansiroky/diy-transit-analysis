@@ -8,6 +8,7 @@ from datetime import date
 
 from diy_transit_analysis.config import AgencyConfig, Config, ConfigError, get_agency, load_config
 from diy_transit_analysis.gtfs import schedule as gtfs_schedule
+from diy_transit_analysis.report import dashboard
 from diy_transit_analysis.report import on_time_performance as otp
 from diy_transit_analysis.report import schedule_stats
 from diy_transit_analysis.tides import historic as tides_historic
@@ -128,6 +129,49 @@ def cmd_report_schedule_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_dashboard(
+    feed,
+    config: Config,
+    agency_name: str,
+    *,
+    tides_files: list | None = None,
+    date_range: tuple | None = None,
+) -> None:
+    data = dashboard.build_dashboard_data(
+        feed, agency=agency_name, tides_files=tides_files, date_range=date_range
+    )
+    html = dashboard.render_html(data)
+    dest = dashboard.write_html(html, config.output_dir, agency_name, data.feed_start_date, data.feed_end_date)
+    print(f"Wrote dashboard to {dest}.")
+
+
+def cmd_report_html(args: argparse.Namespace) -> int:
+    config, agency_name = _load(args)
+    agency = get_agency(config, agency_name)
+
+    gtfs_zip = config.output_dir / agency_name / "gtfs" / "gtfs.zip"
+    if not gtfs_zip.exists():
+        raise SystemExit(
+            f"error: {gtfs_zip} not found — run `fetch-gtfs --config {args.config} --agency {agency_name}` first."
+        )
+    feed = gtfs_schedule.load_schedule(gtfs_zip)
+
+    tides_files = None
+    date_range = None
+    if agency.tides is not None:
+        tides_dir = config.output_dir / agency_name / "tides" / "raw"
+        if not tides_dir.is_dir():
+            raise SystemExit(
+                f"error: {tides_dir} not found — run `fetch-tides --config {args.config} --agency {agency_name}` first."
+            )
+        if agency.date_range is not None:
+            tides_files = sorted(tides_dir.glob("*.csv"))
+            date_range = (agency.date_range.start, agency.date_range.end)
+
+    _write_dashboard(feed, config, agency_name, tides_files=tides_files, date_range=date_range)
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Fetch everything and generate every report the selected agency's config supports.
 
@@ -153,41 +197,46 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"[run] Generating schedule-stats report for {agency_name} ...")
     _write_schedule_stats(feed, config, agency_name)
 
+    tides_files = None
+    date_range = None
+
     if agency.tides is None:
         print(
             f"[run] Skipped TIDES fetch and the on-time-performance report: "
             f"agencies.{agency_name}.tides is not configured."
         )
-        return 0
-
-    tides_dir = config.output_dir / agency_name / "tides" / "raw"
-    print(
-        f"[run] Fetching TIDES historic data for {agency_name} from "
-        f"gs://{agency.tides.gcs_bucket} (billed to {agency.tides.gcp_billing_project}) ..."
-    )
-    written = tides_historic.fetch_historic(agency.tides, tides_dir)
-    print(f"[run] Saved {len(written)} file(s) to {tides_dir}.")
-
-    if agency.date_range is None:
+    else:
+        tides_dir = config.output_dir / agency_name / "tides" / "raw"
         print(
-            f"[run] Skipped the on-time-performance report: "
-            f"agencies.{agency_name}.date_range is not configured."
+            f"[run] Fetching TIDES historic data for {agency_name} from "
+            f"gs://{agency.tides.gcs_bucket} (billed to {agency.tides.gcp_billing_project}) ..."
         )
-        return 0
+        written = tides_historic.fetch_historic(agency.tides, tides_dir)
+        print(f"[run] Saved {len(written)} file(s) to {tides_dir}.")
 
-    print(f"[run] Generating on-time-performance report for {agency_name} ...")
-    tides_files = sorted(tides_dir.glob("*.csv"))
-    otp_df = otp.build_otp_report(
-        feed,
-        tides_files,
-        agency=agency_name,
-        start=agency.date_range.start,
-        end=agency.date_range.end,
-    )
-    otp_dest = otp.write_report(
-        otp_df, config.output_dir, agency_name, agency.date_range.start, agency.date_range.end
-    )
-    print(f"[run] Wrote {len(otp_df)} row(s) to {otp_dest}.")
+        if agency.date_range is None:
+            print(
+                f"[run] Skipped the on-time-performance report: "
+                f"agencies.{agency_name}.date_range is not configured."
+            )
+        else:
+            print(f"[run] Generating on-time-performance report for {agency_name} ...")
+            tides_files = sorted(tides_dir.glob("*.csv"))
+            date_range = (agency.date_range.start, agency.date_range.end)
+            otp_df = otp.build_otp_report(
+                feed,
+                tides_files,
+                agency=agency_name,
+                start=agency.date_range.start,
+                end=agency.date_range.end,
+            )
+            otp_dest = otp.write_report(
+                otp_df, config.output_dir, agency_name, agency.date_range.start, agency.date_range.end
+            )
+            print(f"[run] Wrote {len(otp_df)} row(s) to {otp_dest}.")
+
+    print(f"[run] Generating dashboard report for {agency_name} ...")
+    _write_dashboard(feed, config, agency_name, tides_files=tides_files, date_range=date_range)
     return 0
 
 
@@ -218,6 +267,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_args(report_schedule_stats)
     report_schedule_stats.set_defaults(func=cmd_report_schedule_stats)
+
+    report_html = report_subparsers.add_parser(
+        "html",
+        help="Static HTML dashboard combining schedule stats and (when available) TIDES benchmarks.",
+    )
+    _add_common_args(report_html)
+    report_html.set_defaults(func=cmd_report_html)
 
     run = subparsers.add_parser(
         "run", help="Fetch GTFS (+ TIDES if configured) and generate every report the agency's config supports."
