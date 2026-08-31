@@ -33,7 +33,7 @@ def _seconds_to_time(value: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def _feed_date_range(feed: gk.Feed) -> tuple[date, date]:
+def feed_date_range(feed: gk.Feed) -> tuple[date, date]:
     dates = feed.get_dates(as_date_obj=True)
     if not dates:
         raise ValueError(
@@ -45,7 +45,7 @@ def _feed_date_range(feed: gk.Feed) -> tuple[date, date]:
     return min(dates), max(dates)
 
 
-def _representative_week(feed: gk.Feed) -> list[date]:
+def representative_week(feed: gk.Feed) -> list[date]:
     week = feed.get_first_week(as_date_obj=True)
     if week:
         return week
@@ -90,8 +90,8 @@ def build_schedule_stats_report(feed: gk.Feed, agency: str) -> pd.DataFrame:
     specs/principles.md#reproducibility-over-cleverness — it never
     depends on the wall-clock date the report is run.
     """
-    feed_start, feed_end = _feed_date_range(feed)
-    week_days = _representative_week(feed)
+    feed_start, feed_end = feed_date_range(feed)
+    week_days = representative_week(feed)
     week_start = min(week_days) if week_days else feed_start
 
     day_counts = _route_trip_counts_by_day(feed, week_days)

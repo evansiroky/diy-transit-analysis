@@ -12,8 +12,8 @@ silently skips an invalid agency entry.
 ## Applies To
 
 All CLI subcommands (`fetch-gtfs`, `fetch-tides`, `report otp`, `report
-schedule-stats`, `run`) and the `diy_transit_analysis.config.load_config()`
-function they share.
+schedule-stats`, `report html`, `run`) and the
+`diy_transit_analysis.config.load_config()` function they share.
 
 ## Details
 
@@ -48,9 +48,15 @@ function they share.
   `date_range:`) is **not** a config-validation failure — the config
   itself is valid. It's a command-level error, raised when that
   subcommand runs, naming exactly which block is missing and for which
-  agency. `run` treats the same situation as a report to skip (with an
-  explanation printed), not an error — see
-  [../architecture.md#the-run-subcommand](../architecture.md#the-run-subcommand).
+  agency. `run` and `report html` treat the same situation as a section
+  to skip (with an explanation printed/shown), not an error — see
+  [../architecture.md#the-run-subcommand](../architecture.md#the-run-subcommand)
+  and
+  [../data-model.md#static-html-dashboard-report-output](../data-model.md#static-html-dashboard-report-output).
+  `report html` still hard-fails, the same way `report otp` does, when
+  `tides:`/`date_range:` *are* configured but TIDES hasn't been fetched
+  yet — that's a setup step the user still needs to run, not a case to
+  silently skip.
 
 ## Principles
 

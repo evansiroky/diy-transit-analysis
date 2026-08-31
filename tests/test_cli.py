@@ -41,7 +41,9 @@ def _fake_fetch_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli.gtfs_schedule, "fetch_schedule", _copy_fixture)
 
 
-def test_run_on_gtfs_only_agency_produces_only_schedule_stats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+def test_run_on_gtfs_only_agency_produces_schedule_stats_and_dashboard_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(GTFS_ONLY_CONFIG)
     _fake_fetch_schedule(monkeypatch)
@@ -52,7 +54,11 @@ def test_run_on_gtfs_only_agency_produces_only_schedule_stats(tmp_path: Path, mo
     assert (tmp_path / "output" / "Bar" / "gtfs" / "gtfs.zip").exists()
     reports_dir = tmp_path / "output" / "reports" / "Bar"
     assert list(reports_dir.glob("schedule-stats-*.csv"))
+    assert list(reports_dir.glob("dashboard-*.html"))
     assert not list(reports_dir.glob("otp-*.csv"))
+
+    dashboard_html = next(reports_dir.glob("dashboard-*.html")).read_text()
+    assert "Not shown" in dashboard_html  # TIDES section absent, with a note
 
     out = capsys.readouterr().out
     assert "Skipped TIDES fetch and the on-time-performance report" in out
@@ -88,6 +94,35 @@ def test_run_on_full_agency_produces_both_reports(tmp_path: Path, monkeypatch: p
     reports_dir = tmp_path / "output" / "reports" / "Bar"
     assert list(reports_dir.glob("schedule-stats-*.csv"))
     assert list(reports_dir.glob("otp-*.csv"))
+    assert list(reports_dir.glob("dashboard-*.html"))
+
+    dashboard_html = next(reports_dir.glob("dashboard-*.html")).read_text()
+    assert "Trips performed" in dashboard_html
+
+
+def test_report_html_standalone_on_gtfs_only_agency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(GTFS_ONLY_CONFIG)
+    _fake_fetch_schedule(monkeypatch)
+    cli.main(["fetch-gtfs", "--config", str(config_path), "--agency", "Bar"])
+
+    exit_code = cli.main(["report", "html", "--config", str(config_path), "--agency", "Bar"])
+
+    assert exit_code == 0
+    reports_dir = tmp_path / "output" / "reports" / "Bar"
+    assert list(reports_dir.glob("dashboard-*.html"))
+
+
+def test_report_html_on_configured_but_not_fetched_tides_fails_with_clear_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(FULL_CONFIG)
+    _fake_fetch_schedule(monkeypatch)
+    cli.main(["fetch-gtfs", "--config", str(config_path), "--agency", "Bar"])
+
+    with pytest.raises(SystemExit, match=r"tides.*raw.*not found"):
+        cli.main(["report", "html", "--config", str(config_path), "--agency", "Bar"])
 
 
 def test_fetch_tides_on_gtfs_only_agency_fails_with_clear_message(tmp_path: Path):

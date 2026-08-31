@@ -10,7 +10,7 @@ bucket layout/format has not been verified (see
 diy_transit_analysis.tides.historic and
 specs/architecture.md#tides-historic-data-access). Once real fetched TIDES
 data is available, confirm these column names and adjust
-_read_tides_performed accordingly.
+read_tides_performed accordingly.
 """
 
 from __future__ import annotations
@@ -36,10 +36,17 @@ _ASSUMED_TIDES_COLUMNS = {
 }
 
 
-def _read_tides_performed(tides_files: list[Path]) -> pd.DataFrame:
+def read_tides_performed(tides_files: list[Path]) -> pd.DataFrame:
     """Read and concatenate the fetched TIDES "trips performed" CSV(s).
 
-    See this module's docstring for the assumed column shape.
+    A fetched TIDES directory may hold more than one distinct CSV shape
+    (see specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files
+    for the other two this project reads) — a `.csv` file that doesn't
+    carry every column of *this* shape is skipped, not treated as an
+    error, since it likely belongs to one of those other shapes. This
+    read only "fails loud" in the sense that every file it *does* claim
+    must match exactly; see this module's docstring for the assumed
+    column shape.
     """
     frames = []
     for path in tides_files:
@@ -49,15 +56,8 @@ def _read_tides_performed(tides_files: list[Path]) -> pd.DataFrame:
         # they compare correctly against gtfs-kit's own string-typed IDs and
         # so leading zeros in agency-assigned IDs (e.g. "001") aren't lost.
         df = pd.read_csv(path, dtype={"route_id": str, "trip_id": str})
-        missing = _ASSUMED_TIDES_COLUMNS - set(df.columns)
-        if missing:
-            raise ValueError(
-                f"{path}: missing expected TIDES columns {sorted(missing)} — "
-                "the assumed TIDES CSV shape in "
-                "diy_transit_analysis.report.on_time_performance may be out "
-                "of date; verify against a real fetched TIDES file."
-            )
-        frames.append(df)
+        if _ASSUMED_TIDES_COLUMNS.issubset(df.columns):
+            frames.append(df)
 
     if not frames:
         return pd.DataFrame(columns=sorted(_ASSUMED_TIDES_COLUMNS))
@@ -99,7 +99,7 @@ def build_otp_report(
     """
     scheduled_counts = _scheduled_trip_counts(feed, start, end)
 
-    performed = _read_tides_performed(tides_files)
+    performed = read_tides_performed(tides_files)
 
     # tides.historic.fetch_historic() does not itself filter by date range
     # (the real TIDES bucket layout is unverified — see

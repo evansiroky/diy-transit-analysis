@@ -20,9 +20,10 @@ diy-transit-analysis run --config config/example.yaml --agency SacRT
 
 `run` fetches GTFS (+ TIDES if the agency configured a `tides:` block) and
 generates every report the agency's config supports — always
-`schedule-stats` (GTFS-only, no date range needed), plus `otp` if
-`tides:`/`date_range:` are both configured. The individual stages
-(`fetch-gtfs`, `fetch-tides`, `report otp`, `report schedule-stats`) are
+`schedule-stats` and `html` (GTFS-only, no date range needed), plus `otp`
+if `tides:`/`date_range:` are both configured (the `html` dashboard then
+also includes TIDES benchmarks). The individual stages (`fetch-gtfs`,
+`fetch-tides`, `report otp`, `report schedule-stats`, `report html`) are
 still available standalone — see `specs/architecture.md#cli-entrypoint-shape`.
 
 ## Spec-driven development (specops)
