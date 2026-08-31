@@ -8,10 +8,45 @@
 
 output_dir: output
 
+# National, agency-independent NTD (National Transit Database) Time Series
+# source files — one FTA-published spreadsheet per metric, covering every
+# NTD-reporting agency. Whole block optional (specs/behaviors/config-
+# validation.md); each entry becomes one chart in `report ntd`'s output,
+# grouped by category. URLs below are ILLUSTRATIVE PLACEHOLDERS, not
+# verified against a live download — see specs/architecture.md#ntd-time-
+# series-data-access and src/diy_transit_analysis/ntd/timeseries.py.
+# Find the real current download links on FTA's NTD Data page
+# (https://www.transit.dot.gov/ntd/ntd-data) and replace these.
+ntd:
+  time_series:
+    - name: "Unlinked Passenger Trips"
+      category: service          # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/UPT_Time_Series.xlsx"
+    - name: "Vehicle Revenue Hours"
+      category: service          # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/VRH_Time_Series.xlsx"
+    - name: "Vehicles Operated in Maximum Service"
+      category: service          # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/VOMS_Time_Series.xlsx"
+    - name: "Operating Expenses"
+      category: expenditure      # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Operating_Expenses_Time_Series.xlsx"
+    - name: "Total Funding"
+      category: funding          # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Funding_Time_Series.xlsx"
+    - name: "Total Fleet Vehicles"
+      category: asset            # ASSUMED URL, verify
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Fleet_Time_Series.xlsx"
+
 agencies:
   SacRT:
     # Live, public GTFS Schedule feed (verified reachable as of this commit).
     gtfs_schedule_url: "http://iportal.sacrt.com/GTFS/SRTD/google_transit.zip"
+
+    # FTA's 5-digit NTD ID for SacRT, used to filter the shared ntd.time_series
+    # files above down to this agency. Required for `report ntd`/the NTD
+    # portion of `run`; not required just to `fetch-ntd`.
+    ntd_id: "90019"
 
     tides:
       # ASSUMED SHAPE, NOT VERIFIED against the live tides.dds.dot.ca.gov

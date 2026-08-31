@@ -14,6 +14,7 @@ authors = [{ name = "Evan Siroky" }]
 dependencies = [
     "gtfs-kit>=10.1",
     "google-cloud-storage>=2.10",
+    "openpyxl>=3.1",
     "pandas>=2.0",
     "pyyaml>=6.0",
     "requests>=2.31",

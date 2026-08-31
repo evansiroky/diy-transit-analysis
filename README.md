@@ -1,11 +1,14 @@
 # diy-transit-analysis
 
-A Python toolkit that pulls a transit agency's **GTFS Schedule** feed and
+A Python toolkit that pulls a transit agency's **GTFS Schedule** feed,
 historic performance data from Caltrans' **TIDES** data portal
-(https://tides.dds.dot.ca.gov), and reports on on-time performance and
-cancellations. Open source, not monetized — built for journalists,
-advocates, board members, and agencies themselves who want an
-independently-reproducible accountability number.
+(https://tides.dds.dot.ca.gov), and multi-year trend data from the
+**National Transit Database (NTD)** Time Series data products
+(https://www.transit.dot.gov/ntd), and reports on on-time performance,
+cancellations, and service/funding/expenditure/asset trends. Open source,
+not monetized — built for journalists, advocates, board members, and
+agencies themselves who want an independently-reproducible accountability
+number.
 
 ## Status
 
@@ -26,6 +29,21 @@ an even newer, similarly **unverified** guess at two additional TIDES
 CSV shapes — see
 [`specs/data-model.md`](specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files).
 
+NTD Time Series fetch/parsing (`fetch-ntd`, `report ntd`) is likewise
+implemented against a **documented, not-yet-verified assumption** about
+the shape of FTA's published Time Series spreadsheets — network access to
+`transit.dot.gov` was unavailable while building this feature. Parsing is
+deliberately resilient to exact-header-text drift (alias matching + a
+numeric-year-column test) rather than pinned to specific column names,
+but the example config's `ntd.time_series[].url` values are illustrative
+placeholders — see
+[`specs/architecture.md`](specs/architecture.md#ntd-time-series-data-access)
+and the module docstring in
+[`src/diy_transit_analysis/ntd/timeseries.py`](src/diy_transit_analysis/ntd/timeseries.py)
+before relying on it, and replace the placeholder URLs with the real
+current download links from
+[FTA's NTD Data page](https://www.transit.dot.gov/ntd/ntd-data).
+
 This project follows [spec-driven development](CLAUDE.md) — `specs/` is
 the source of truth for intended behavior, `plans/` tracks work in flight.
 
@@ -38,8 +56,8 @@ pip install -e ".[dev]"
 ## Usage
 
 Copy [`config/example.yaml`](config/example.yaml), point it at your
-agency's GTFS feed (and, optionally, its TIDES bucket + reporting window),
-then run everything in one command:
+agency's GTFS feed (and, optionally, its TIDES bucket + reporting window,
+and its NTD ID), then run everything in one command:
 
 ```sh
 diy-transit-analysis run --config config/example.yaml --agency SacRT
@@ -49,14 +67,17 @@ diy-transit-analysis run --config config/example.yaml --agency SacRT
 `schedule-stats` and `html` (dashboard) reports, and — only if the
 agency's config includes a `tides:` block and a `date_range:` block —
 also fetches TIDES data and generates the `otp` (on-time-performance)
-report, printing what it did or skipped (and why) as it goes.
+report; and — only if the config includes a top-level `ntd:` block and
+the agency has `ntd_id:` configured — also fetches NTD Time Series data
+and generates the `ntd` report, printing what it did or skipped (and why)
+as it goes.
 
 An agency that only configures `gtfs_schedule_url` (no `tides:`, no
-`date_range:` — see the commented-out `SmallTownTransit` example in
-`config/example.yaml`) is a fully valid config: `run` fetches its GTFS
-feed and produces `schedule-stats` and `html` (route-level trip counts,
-service span, stop counts, vehicles-in-service — no TIDES access or GCP
-project required).
+`date_range:`, no `ntd_id:` — see the commented-out `SmallTownTransit`
+example in `config/example.yaml`) is a fully valid config: `run` fetches
+its GTFS feed and produces `schedule-stats` and `html` (route-level trip
+counts, service span, stop counts, vehicles-in-service — no TIDES access,
+GCP project, or NTD data required).
 
 `report html` writes a single self-contained, offline-viewable HTML
 dashboard — no external scripts/fonts/CDN — combining GTFS-only schedule
@@ -68,14 +89,22 @@ and [ETA Accuracy](https://github.com/TransitApp/ETA-Accuracy-Benchmark)
 benchmark scores (see the Status section above on the TIDES assumptions
 behind these two).
 
+`report ntd` writes a second, similarly self-contained HTML report of
+NTD Time Series trend charts for the agency — one chart per
+`ntd.time_series[]` entry configured, grouped into Service, Expenditure,
+Funding, and Asset sections (see the Status section above on the NTD
+assumptions behind this one).
+
 The individual pipeline stages are also available standalone:
 
 ```sh
 diy-transit-analysis fetch-gtfs            --config config/example.yaml --agency SacRT
 diy-transit-analysis fetch-tides           --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-ntd             --config config/example.yaml --agency SacRT
 diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
 diy-transit-analysis report otp            --config config/example.yaml --agency SacRT
 diy-transit-analysis report html           --config config/example.yaml --agency SacRT
+diy-transit-analysis report ntd            --config config/example.yaml --agency SacRT
 ```
 
 This writes fetched data and report files under `output/` (gitignored).
@@ -84,7 +113,9 @@ agency; `fetch-tides` also requires a Google Cloud project with billing
 enabled, since the TIDES bucket is requester-pays (see the Status section
 above). `report html` works for any agency, showing its TIDES benchmarks
 section only when `tides:`/`date_range:` are configured and already
-fetched.
+fetched. `fetch-ntd` requires only the top-level `ntd:` block (it fetches
+files shared across every agency); `report ntd` additionally requires the
+selected agency's `ntd_id:` and that `fetch-ntd` has already run.
 
 ## Development
 

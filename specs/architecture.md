@@ -34,9 +34,15 @@ diy-transit-analysis/
 │       ├── tides/
 │       │   ├── __init__.py
 │       │   └── historic.py        # fetch historic TIDES data
+│       ├── ntd/
+│       │   ├── __init__.py
+│       │   └── timeseries.py      # fetch + parse NTD Time Series data files
 │       └── report/
 │           ├── __init__.py
-│           └── on_time_performance.py
+│           ├── on_time_performance.py
+│           ├── html_charts.py     # shared inline-SVG chart/table rendering, used by dashboard.py and ntd.py
+│           ├── dashboard.py
+│           └── ntd.py
 ├── tests/
 ├── specs/
 └── plans/
@@ -53,9 +59,24 @@ preserved for cross-project consistency, per
 
 ```yaml
 output_dir: output
+
+# National, agency-independent NTD Time Series source files — see "NTD Time
+# Series data access" below. Whole block optional; each entry is one
+# downloadable file that becomes one chart, grouped into the `report ntd`
+# HTML report by its category.
+ntd:
+  time_series:
+    - name: "Unlinked Passenger Trips"
+      category: service
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/.../UPT_time_series.xlsx"
+    - name: "Vehicle Revenue Hours"
+      category: service
+      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/.../VRH_time_series.xlsx"
+
 agencies:
   SacRT:
     gtfs_schedule_url: "https://gtfs.sacrt.com/current/google_transit.zip"
+    ntd_id: "90019"  # FTA's 5-digit NTD ID for this agency — see data-model.md#config-file
     tides:
       # See "TIDES data access" below — this shape is our best current
       # understanding of the live portal, not a verified API contract.
@@ -77,7 +98,13 @@ agencies:
 ```
 
 Adding an agency is adding a new top-level key under `agencies:` — no code
-change required (config-driven onboarding principle).
+change required (config-driven onboarding principle). Adding an NTD metric
+to chart is likewise adding one entry to the top-level `ntd.time_series:`
+list — no code change required, per
+[principles.md#config-driven-agency-onboarding](principles.md#config-driven-agency-onboarding)
+(generalized here from "agency" to "metric source": the `report ntd`
+output is entirely a function of what's listed in config, not of anything
+hard-coded about which NTD files exist).
 
 ## GTFS Schedule feed fetch + parse
 
@@ -127,6 +154,59 @@ Working assumptions, all flagged for verification:
   `Bucket(..., user_project=<gcp_billing_project>)` to satisfy
   requester-pays billing.
 
+## NTD Time Series data access
+
+**The Federal Transit Administration publishes "Time Series" data
+products** (`transit.dot.gov`'s NTD Data page) — one downloadable
+spreadsheet per metric, each covering every NTD-reporting agency across
+every year the metric has been collected (service, financial, and
+asset/fleet metrics going back to 1991 for the oldest series). Unlike
+GTFS or TIDES, this data is **agency-independent at fetch time**: one
+file covers every agency, and per-agency reporting is a filter applied
+at analysis time by the agency's **NTD ID** (a 5-digit code FTA assigns
+per reporting agency — SacRT's is `90019`).
+
+**This project makes no attempt to hard-code which specific NTD files
+exist or their exact download URLs** — FTA's per-release file names and
+URLs are not stable across annual releases, and (per
+[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions))
+this project won't present a guessed, possibly-stale URL as a settled
+fact. Instead, **every metric to chart is a config entry**: a `name` (used
+as the chart title), a `category` (`service`, `funding`, `expenditure`, or
+`asset` — which `report ntd` section it lands in), and the `url` to
+download it from, all supplied by the user (see
+[data-model.md#config-file](data-model.md#config-file)). This is the same
+config-driven-onboarding principle GTFS/TIDES agencies already follow,
+generalized from "agency" to "metric source" — see
+[architecture.md#config-file-format](#config-file-format) above.
+
+**Assumed file shape, NOT verified against a live download this
+session** (network access to `transit.dot.gov` was unavailable while
+writing this spec — this is a documented best-understanding, not a
+working integration test; see
+[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions)):
+
+- Each downloaded file (`.xlsx` or `.csv`) is a **wide** table: one row
+  per reporting agency (further broken out by mode/type-of-service in
+  some files), one column identifying the agency by **NTD ID**, and one
+  column per **year** holding that metric's value for that agency in that
+  year.
+- Because exact column header text (e.g. `"NTD ID"` vs. `"5 Digit NTD
+  ID"`) and exact year-column formatting aren't verified, parsing is
+  **structural, not name-exact**: the NTD ID column is found by matching
+  a small set of known header aliases (case-insensitive), and year
+  columns are found by testing whether a header parses as a bare 4-digit
+  year — not by hard-coding an exact expected column list. See
+  [data-model.md#ntd-time-series-data-on-disk-fetched](data-model.md#ntd-time-series-data-on-disk-fetched)
+  for the full parsing rule.
+- A file may have more than one row for the configured NTD ID (e.g. one
+  row per mode or type-of-service); these are summed per year to produce
+  one agency-total annual series, matching how NTD's own summary
+  statistics aggregate mode/TOS breakdowns into agency totals.
+- Before relying on this for real public reporting, verify actual
+  downloaded NTD Time Series files against this assumed shape and update
+  this section accordingly.
+
 ## Output format
 
 - **CSV** for report output — matches `gtfs-rt-to-tides`'s own output
@@ -152,20 +232,28 @@ this project is packaged (`pip install`-able) rather than run in place:
 ```
 diy-transit-analysis fetch-gtfs            --config config/example.yaml --agency SacRT
 diy-transit-analysis fetch-tides           --config config/example.yaml --agency SacRT
+diy-transit-analysis fetch-ntd             --config config/example.yaml --agency SacRT
 diy-transit-analysis report otp            --config config/example.yaml --agency SacRT
 diy-transit-analysis report schedule-stats --config config/example.yaml --agency SacRT
 diy-transit-analysis report html           --config config/example.yaml --agency SacRT
+diy-transit-analysis report ntd            --config config/example.yaml --agency SacRT
 diy-transit-analysis run                   --config config/example.yaml --agency SacRT
 ```
 
-Each subcommand reads the same config file and an `--agency` selector.
-`report otp` (on-time performance), `report schedule-stats` (GTFS-only
-scheduled-service stats, see
+Each subcommand reads the same config file and an `--agency` selector
+(`fetch-ntd`'s fetch step itself is agency-independent — see
+[architecture.md#ntd-time-series-data-access](#ntd-time-series-data-access)
+— but it still takes `--agency` for CLI-shape consistency and to validate
+the selector). `report otp` (on-time performance), `report schedule-stats`
+(GTFS-only scheduled-service stats, see
 [data-model.md#gtfs-schedule-stats-report-output](data-model.md#gtfs-schedule-stats-report-output)),
-and `report html` (a static HTML dashboard combining schedule and, when
+`report html` (a static HTML dashboard combining schedule and, when
 available, TIDES stats — see
-[data-model.md#static-html-dashboard-report-output](data-model.md#static-html-dashboard-report-output))
-are the MVP's three report types.
+[data-model.md#static-html-dashboard-report-output](data-model.md#static-html-dashboard-report-output)),
+and `report ntd` (a static HTML report of NTD Time Series trend charts —
+see
+[data-model.md#ntd-time-series-report-output](data-model.md#ntd-time-series-report-output))
+are the MVP's four report types.
 
 ### The `report html` dashboard's rendering approach
 
@@ -179,7 +267,9 @@ used only for hover/crosshair affordances on the two charts — every value
 it can show is also present in a plain HTML `<table>` on the same page
 (inside a collapsed `<details>`), so nothing is reachable only by
 hovering, and the page degrades to fully static (still fully readable)
-with JavaScript disabled.
+with JavaScript disabled. `report ntd` renders with the same approach,
+via the shared helpers in `report/html_charts.py` (see
+[data-model.md#ntd-time-series-report-output](data-model.md#ntd-time-series-report-output)).
 
 ### The `run` subcommand
 
@@ -205,6 +295,12 @@ selected `--agency`, it:
    needs only the GTFS feed, same as `schedule-stats`; its TIDES
    benchmarks section is included automatically when step 4 ran, and
    omitted (with a note) otherwise.
+6. Fetches NTD Time Series data (`fetch-ntd`'s behavior) and generates the
+   `ntd` report **only if** the config has a top-level `ntd:` block *and*
+   the agency has `ntd_id:` configured (both are required — the shared
+   source files without an agency selector to filter by are useless, and
+   vice versa). Otherwise `run` prints which step(s) it skipped and why,
+   same as step 4.
 
 `run` never partially fails silently: every step it takes or skips is
 printed, and any step it does attempt fails loudly the same way the
@@ -215,5 +311,5 @@ equivalent standalone subcommand would (see
 
 `pytest`, tests under `tests/`, no live network calls in the default test
 run — network-touching code is exercised against small local fixture
-files (a trimmed real GTFS zip, a sample TIDES CSV) rather than hitting
-live endpoints in CI.
+files (a trimmed real GTFS zip, a sample TIDES CSV, small hand-built NTD
+Time Series CSV/xlsx fixtures) rather than hitting live endpoints in CI.

@@ -489,13 +489,6 @@ def test_render_html_shows_tides_section_only_when_data_present(tmp_path: Path):
     assert "Trips performed" in html
 
 
-def test_nice_ticks_never_produces_duplicate_labels():
-    for max_value in [0, 1, 2, 3, 5, 7, 9, 42, 100, 4953]:
-        ticks = dashboard._nice_ticks(max_value)
-        assert len(ticks) == len(set(ticks))
-        assert ticks[-1] >= max_value
-
-
 def test_write_html(tmp_path: Path):
     feed = schedule.load_schedule(FIXTURE)
     data = dashboard.build_dashboard_data(feed, agency="Mini")

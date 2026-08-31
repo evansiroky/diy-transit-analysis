@@ -8,7 +8,10 @@ from datetime import date
 
 from diy_transit_analysis.config import AgencyConfig, Config, ConfigError, get_agency, load_config
 from diy_transit_analysis.gtfs import schedule as gtfs_schedule
+from diy_transit_analysis.ntd import timeseries as ntd_timeseries
+from diy_transit_analysis.ntd.timeseries import NtdDataError
 from diy_transit_analysis.report import dashboard
+from diy_transit_analysis.report import ntd as ntd_report
 from diy_transit_analysis.report import on_time_performance as otp
 from diy_transit_analysis.report import schedule_stats
 from diy_transit_analysis.tides import historic as tides_historic
@@ -59,6 +62,22 @@ def _require_date_range(agency: AgencyConfig, config_path: str, command: str) ->
         )
 
 
+def _require_ntd(config: Config, config_path: str, command: str) -> None:
+    if config.ntd is None:
+        raise SystemExit(
+            f"error: ntd is not configured in {config_path} — "
+            f"{command} requires a top-level ntd: block (time_series: [...])."
+        )
+
+
+def _require_ntd_id(agency: AgencyConfig, config_path: str, command: str) -> None:
+    if agency.ntd_id is None:
+        raise SystemExit(
+            f"error: agencies.{agency.name}.ntd_id is not configured in {config_path} — "
+            f"{command} requires ntd_id: to be set for this agency."
+        )
+
+
 def cmd_fetch_tides(args: argparse.Namespace) -> int:
     config, agency_name = _load(args)
     agency = get_agency(config, agency_name)
@@ -70,6 +89,20 @@ def cmd_fetch_tides(args: argparse.Namespace) -> int:
         f"gs://{agency.tides.gcs_bucket} (billed to {agency.tides.gcp_billing_project}) ..."
     )
     written = tides_historic.fetch_historic(agency.tides, dest_dir)
+    print(f"Saved {len(written)} file(s) to {dest_dir}.")
+    return 0
+
+
+def cmd_fetch_ntd(args: argparse.Namespace) -> int:
+    # Agency-independent fetch (specs/architecture.md#ntd-time-series-
+    # data-access) — --agency is still validated for CLI-shape
+    # consistency, but ntd_id isn't required for this command.
+    config, agency_name = _load(args)
+    _require_ntd(config, args.config, "fetch-ntd")
+
+    dest_dir = config.output_dir / "ntd" / "raw"
+    print(f"Fetching {len(config.ntd.time_series)} NTD Time Series source(s) to {dest_dir} ...")
+    written = ntd_timeseries.fetch_time_series(config.ntd.time_series, dest_dir)
     print(f"Saved {len(written)} file(s) to {dest_dir}.")
     return 0
 
@@ -172,12 +205,38 @@ def cmd_report_html(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_ntd_report(config: Config, agency_name: str, ntd_id: str) -> None:
+    raw_dir = config.output_dir / "ntd" / "raw"
+    data = ntd_report.build_ntd_report_data(config.ntd.time_series, raw_dir, agency=agency_name, ntd_id=ntd_id)
+    html = ntd_report.render_html(data)
+    dest = ntd_report.write_html(html, config.output_dir, agency_name, data.min_year, data.max_year)
+    print(f"Wrote NTD Time Series report to {dest}.")
+
+
+def cmd_report_ntd(args: argparse.Namespace) -> int:
+    config, agency_name = _load(args)
+    agency = get_agency(config, agency_name)
+    _require_ntd(config, args.config, "report ntd")
+    _require_ntd_id(agency, args.config, "report ntd")
+
+    raw_dir = config.output_dir / "ntd" / "raw"
+    if not raw_dir.is_dir():
+        raise SystemExit(
+            f"error: {raw_dir} not found — run `fetch-ntd --config {args.config} --agency {agency_name}` first."
+        )
+
+    _write_ntd_report(config, agency_name, agency.ntd_id)
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Fetch everything and generate every report the selected agency's config supports.
 
     Always fetches GTFS and produces the schedule-stats report (GTFS-only,
     no tides/date_range needed). Fetches TIDES and produces the otp report
-    only if the agency configured tides: (and, for otp, date_range: too) —
+    only if the agency configured tides: (and, for otp, date_range: too).
+    Fetches NTD Time Series data and produces the ntd report only if both
+    the top-level ntd: block and the agency's ntd_id: are configured —
     see specs/architecture.md#the-run-subcommand.
     """
     config, agency_name = _load(args)
@@ -237,6 +296,23 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"[run] Generating dashboard report for {agency_name} ...")
     _write_dashboard(feed, config, agency_name, tides_files=tides_files, date_range=date_range)
+
+    if config.ntd is None or agency.ntd_id is None:
+        missing = []
+        if config.ntd is None:
+            missing.append("ntd (top-level) is not configured")
+        if agency.ntd_id is None:
+            missing.append(f"agencies.{agency_name}.ntd_id is not configured")
+        print(f"[run] Skipped NTD fetch and the NTD Time Series report: {'; '.join(missing)}.")
+    else:
+        ntd_dest_dir = config.output_dir / "ntd" / "raw"
+        print(f"[run] Fetching {len(config.ntd.time_series)} NTD Time Series source(s) to {ntd_dest_dir} ...")
+        ntd_written = ntd_timeseries.fetch_time_series(config.ntd.time_series, ntd_dest_dir)
+        print(f"[run] Saved {len(ntd_written)} file(s) to {ntd_dest_dir}.")
+
+        print(f"[run] Generating NTD Time Series report for {agency_name} ...")
+        _write_ntd_report(config, agency_name, agency.ntd_id)
+
     return 0
 
 
@@ -254,6 +330,12 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_tides = subparsers.add_parser("fetch-tides", help="Fetch an agency's historic TIDES data.")
     _add_common_args(fetch_tides)
     fetch_tides.set_defaults(func=cmd_fetch_tides)
+
+    fetch_ntd = subparsers.add_parser(
+        "fetch-ntd", help="Fetch the configured NTD Time Series source files (agency-independent)."
+    )
+    _add_common_args(fetch_ntd)
+    fetch_ntd.set_defaults(func=cmd_fetch_ntd)
 
     report = subparsers.add_parser("report", help="Generate a report.")
     report_subparsers = report.add_subparsers(dest="report_type", required=True)
@@ -275,8 +357,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_args(report_html)
     report_html.set_defaults(func=cmd_report_html)
 
+    report_ntd = report_subparsers.add_parser(
+        "ntd",
+        help="Static HTML report of NTD Time Series trend charts (service, expenditure, funding, asset).",
+    )
+    _add_common_args(report_ntd)
+    report_ntd.set_defaults(func=cmd_report_ntd)
+
     run = subparsers.add_parser(
-        "run", help="Fetch GTFS (+ TIDES if configured) and generate every report the agency's config supports."
+        "run",
+        help="Fetch GTFS (+ TIDES/NTD if configured) and generate every report the agency's config supports.",
     )
     _add_common_args(run)
     run.set_defaults(func=cmd_run)
@@ -289,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ConfigError, TidesAccessError) as exc:
+    except (ConfigError, TidesAccessError, NtdDataError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
