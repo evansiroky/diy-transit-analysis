@@ -46,10 +46,15 @@ otp`, `report schedule-stats`, `report html`, `report ntd`, `run`) and the
   own data — see
   [../architecture.md#ntd-time-series-data-access](../architecture.md#ntd-time-series-data-access)).
   When present, `ntd.time_series` must be a non-empty list, and every
-  entry must have all three of `name` (non-empty string), `category` (one
-  of `service`, `funding`, `expenditure`, `asset` — any other value fails
-  validation, naming the allowed set), and `url` (`http://`/`https://`
-  only, same rule as `gtfs_schedule_url`).
+  entry must have `name` (non-empty string), `category` (one of
+  `service`, `funding`, `expenditure`, `asset` — any other value fails
+  validation, naming the allowed set), and `product_url`
+  (`http://`/`https://` only, same rule as `gtfs_schedule_url` — this is
+  the data product's landing page, not a direct file link, see
+  [../architecture.md#ntd-time-series-data-access](../architecture.md#ntd-time-series-data-access)).
+  `sheet` is optional (non-empty string if present, no format beyond
+  that enforced — the real sheet-name text is unconfirmed, see
+  architecture.md).
 - `gtfs_schedule_url` and any URL field must be `http://` or `https://` —
   no local file paths, no other schemes (keeps the "public data only"
   principle mechanically enforced rather than just documented; see

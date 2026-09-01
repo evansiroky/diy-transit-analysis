@@ -9,34 +9,60 @@
 output_dir: output
 
 # National, agency-independent NTD (National Transit Database) Time Series
-# source files — one FTA-published spreadsheet per metric, covering every
-# NTD-reporting agency. Whole block optional (specs/behaviors/config-
-# validation.md); each entry becomes one chart in `report ntd`'s output,
-# grouped by category. URLs below are ILLUSTRATIVE PLACEHOLDERS, not
-# verified against a live download — see specs/architecture.md#ntd-time-
-# series-data-access and src/diy_transit_analysis/ntd/timeseries.py.
-# Find the real current download links on FTA's NTD Data page
-# (https://www.transit.dot.gov/ntd/ntd-data) and replace these.
+# source files. Whole block optional (specs/behaviors/config-validation.md);
+# each entry is one sheet of one data product's workbook, becoming one chart
+# in `report ntd`'s output, grouped by category. Entries sharing a
+# product_url are fetched once (fetch-ntd scrapes each landing page for its
+# current .xlsx download link — see specs/architecture.md#ntd-time-series-
+# data-access and src/diy_transit_analysis/ntd/timeseries.py).
+#
+# The four product_url landing pages below are CONFIRMED live URLs (used by
+# Caltrans' own cal-itp/data-infra NTD ingestion pipeline, which this
+# project's fetch mechanism mirrors — see architecture.md). The `sheet:`
+# values are NOT independently confirmed — they're inferred from that same
+# pipeline's derived column names, not observed directly in a downloaded
+# workbook. Sheet matching is case/punctuation-insensitive and fails loudly
+# (listing the workbook's real sheet names) if a guess is wrong, so a bad
+# `sheet:` value surfaces immediately rather than silently reading the
+# wrong tab — see the module docstring for details.
 ntd:
   time_series:
     - name: "Unlinked Passenger Trips"
-      category: service          # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/UPT_Time_Series.xlsx"
+      category: service
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "UPT"                # ASSUMED sheet name, verify
     - name: "Vehicle Revenue Hours"
-      category: service          # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/VRH_Time_Series.xlsx"
+      category: service
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "VRH"                # ASSUMED sheet name, verify
     - name: "Vehicles Operated in Maximum Service"
-      category: service          # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/VOMS_Time_Series.xlsx"
+      category: service
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "VOMS"               # ASSUMED sheet name, verify
     - name: "Operating Expenses"
-      category: expenditure      # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Operating_Expenses_Time_Series.xlsx"
-    - name: "Total Funding"
-      category: funding          # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Funding_Time_Series.xlsx"
-    - name: "Total Fleet Vehicles"
-      category: asset            # ASSUMED URL, verify
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/ntd/time-series/Fleet_Time_Series.xlsx"
+      category: expenditure
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "OpExp_Total"        # ASSUMED sheet name, verify
+    - name: "Capital Expenditures"
+      category: expenditure
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts31-capital-expenditures-time-series-2"
+      sheet: "Total"              # ASSUMED sheet name, verify
+    - name: "Total Operating Funding"
+      category: funding
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts12-operating-funding-time-series-3"
+      sheet: "Operating_Total"    # ASSUMED sheet name, verify
+    - name: "Total Capital Funding"
+      category: funding
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts12-operating-funding-time-series-3"
+      sheet: "Capital_Total"      # ASSUMED sheet name, verify
+    - name: "Active Fleet Size"
+      category: asset
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts41-asset-inventory-time-series-4"
+      sheet: "Active_Fleet"       # ASSUMED sheet name, verify
+    - name: "Average Fleet Age"
+      category: asset
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts41-asset-inventory-time-series-4"
+      sheet: "Avg_Fleet_Age"      # ASSUMED sheet name, verify
 
 agencies:
   SacRT:

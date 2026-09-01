@@ -128,7 +128,8 @@ ntd:
   time_series:
     - name: "Unlinked Passenger Trips"
       category: service
-      url: "https://example.org/upt.xlsx"
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data"
+      sheet: "UPT"
 """
 
 
@@ -139,8 +140,22 @@ def test_top_level_ntd_block_loads_when_valid(tmp_path: Path):
     config = load_config(config_path)
 
     assert config.ntd.time_series == [
-        NtdTimeSeriesSource(name="Unlinked Passenger Trips", category="service", url="https://example.org/upt.xlsx")
+        NtdTimeSeriesSource(
+            name="Unlinked Passenger Trips",
+            category="service",
+            product_url="https://www.transit.dot.gov/ntd/data-product/ts21-service-data",
+            sheet="UPT",
+        )
     ]
+
+
+def test_ntd_time_series_sheet_is_optional(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(GOOD_CONFIG + _NTD_BLOCK.replace('      sheet: "UPT"\n', ""))
+
+    config = load_config(config_path)
+
+    assert config.ntd.time_series[0].sheet is None
 
 
 def test_ntd_block_requires_non_empty_time_series(tmp_path: Path):
@@ -161,7 +176,12 @@ def test_ntd_time_series_entry_rejects_unknown_category(tmp_path: Path):
 
 def test_ntd_time_series_entry_rejects_non_http_url(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(GOOD_CONFIG + _NTD_BLOCK.replace('"https://example.org/upt.xlsx"', '"file:///etc/passwd"'))
+    config_path.write_text(
+        GOOD_CONFIG
+        + _NTD_BLOCK.replace(
+            '"https://www.transit.dot.gov/ntd/data-product/ts21-service-data"', '"file:///etc/passwd"'
+        )
+    )
 
     with pytest.raises(ConfigError, match="http"):
         load_config(config_path)

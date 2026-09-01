@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Evan Siroky" }]
 
 dependencies = [
+    "beautifulsoup4>=4.12",
     "gtfs-kit>=10.1",
     "google-cloud-storage>=2.10",
     "openpyxl>=3.1",

@@ -23,9 +23,10 @@ Top-level YAML document, loaded by `diy_transit_analysis.config`.
 | `agencies.<name>.ntd_id`            | string | no       | FTA's 5-digit NTD ID for this agency (e.g. `"90019"` for SacRT), used to filter the national NTD Time Series files down to this agency. Independent of `tides:`/`date_range:`. `report ntd` and the NTD portion of `run` require both this *and* the top-level `ntd:` block below; `fetch-ntd` needs only the top-level block (it fetches agency-independent files — see [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)). |
 | `ntd`                                | map    | no       | Top-level (not per-agency) — whole block optional. Configures the national NTD Time Series source files, shared across every agency. |
 | `ntd.time_series`                    | list   | yes, if `ntd:` present | List of metric sources to fetch and chart. Each entry becomes exactly one chart in `report ntd`'s output — see [below](#ntd-time-series-report-output). Adding/removing a metric is purely a config change, per [architecture.md#config-file-format](architecture.md#config-file-format). |
-| `ntd.time_series[].name`             | string | yes      | Human-readable metric name — used verbatim as the chart title and as the basis of the fetched file's local filename (slugified). |
+| `ntd.time_series[].name`             | string | yes      | Human-readable metric name — used verbatim as the chart title. |
 | `ntd.time_series[].category`         | string, one of `service`/`funding`/`expenditure`/`asset` | yes | Which `report ntd` section this metric's chart is grouped into (see [below](#ntd-time-series-report-output)). |
-| `ntd.time_series[].url`              | string | yes      | Public URL to download this metric's NTD Time Series file (`.xlsx` or `.csv`) from. |
+| `ntd.time_series[].product_url`      | string | yes      | Public URL of the NTD data product's **landing page** (e.g. `https://www.transit.dot.gov/ntd/data-product/ts21-...`) — not a direct file link; the actual `.xlsx` download link is scraped from this page at fetch time, since FTA doesn't publish a stable one (see [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)). Entries sharing the same `product_url` are fetched once, since it's the same workbook. |
+| `ntd.time_series[].sheet`            | string | no       | Which sheet/tab of the (possibly multi-sheet) downloaded workbook holds this metric. Matched case/punctuation-insensitively (see [below](#ntd-time-series-data-on-disk-fetched)). Omit for a workbook with a single relevant sheet — defaults to the first sheet. |
 
 See [behaviors/config-validation.md](behaviors/config-validation.md) for
 validation rules.
@@ -123,27 +124,53 @@ bucket-verification Follow-up).
 
 ## NTD Time Series data (on disk, fetched)
 
-Each configured `ntd.time_series[]` entry is fetched verbatim to
-`<output_dir>/ntd/raw/<slugified-name>.<ext>` (`<ext>` taken from the
-source URL, `.xlsx` or `.csv`) — **not** namespaced under an agency
-directory, since these files are national/agency-independent (see
-[architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)).
-`report ntd` reads from this shared directory and filters to one agency
-at analysis time.
+Fetching a `ntd.time_series[]` entry is two steps, per
+[architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access):
 
-**ASSUMED, NOT VERIFIED against a live download this session** (see
-[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions)) —
-each file is read as a single wide table with this structure:
+1. **Resolve the download link**: GET `product_url` (an HTML landing
+   page), find the `<a>` element whose `type` attribute is
+   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+   and take its `href` as the real, current `.xlsx` download URL. A page
+   with no such link is a loud failure (`NtdDataError`) — the landing
+   page structure has changed and this project's scrape assumption needs
+   revisiting.
+2. **Download that link** and save the workbook to
+   `<output_dir>/ntd/raw/<slug-of-product_url's-landing-page-path>.xlsx`
+   — **not** namespaced under an agency directory, since these files are
+   national/agency-independent. Every `ntd.time_series[]` entry sharing a
+   `product_url` resolves to the same local file — the download happens
+   once per unique `product_url`, not once per entry.
+
+`report ntd` reads from this shared directory and filters to one agency
+(and one sheet) at analysis time.
+
+**Confirmed** (see
+[architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)
+for the cal-itp/data-infra evidence this rests on): the workbook has
+**multiple sheets**, one per metric. `ntd.time_series[].sheet` selects
+which one — matched against the workbook's actual sheet names
+**case/punctuation-insensitively** (both sides normalized to lowercase
+alphanumerics before comparing, e.g. configured `"OpExp Total"` matches
+an actual tab named `"OpExp_Total"`), since the exact literal tab-name
+casing/spacing is unconfirmed. No `sheet:` configured means "use the
+first sheet" (fine for a workbook with only one relevant tab). A
+`sheet:` that matches nothing in the workbook is a loud failure
+(`NtdDataError`) listing every sheet name the workbook actually has, so
+a wrong guess is immediately visible rather than silently reading the
+wrong tab.
+
+**ASSUMED, NOT VERIFIED against a live download this session** — within
+a resolved sheet, the table is read with this structure:
 
 | Column | Required | Meaning |
 |--------|----------|---------|
-| An NTD ID column | yes | Identifies the reporting agency. Detected by header, case-insensitively, against a small set of known aliases (`"ntd id"`, `"5 digit ntd id"`, `"ntdid"`) — not by an exact expected name, since the real header text is unverified. A file with no column matching any alias cannot be parsed for this metric — that's a loud failure (see below), not a skipped/empty result. |
+| An NTD ID column | yes | Identifies the reporting agency. Detected by header, case-insensitively, against a small set of known aliases (`"ntd id"`, `"5 digit ntd id"`, `"ntdid"`) — not by an exact expected name, since the real header text is unverified. A sheet with no column matching any alias cannot be parsed for this metric — that's a loud failure (`NtdDataError`), not a skipped/empty result. |
 | One or more year columns | yes, ≥1 | One column per reporting year, header parsing as a bare 4-digit integer between 1900–2100 (e.g. `2019`, `"2019"`, or a float-like `2019.0` header from a spreadsheet export). Any other column (agency name, mode, type-of-service, UZA, etc.) is ignored — this project does not need or model those breakdowns. |
 
 **Per-agency annual series**: for a configured `ntd_id`, every row whose
 NTD ID column matches (after stripping whitespace and any trailing `.0`
 float artifact from a numeric-typed Excel column) contributes to that
-metric's per-year value; when more than one row matches (e.g. a file
+metric's per-year value; when more than one row matches (e.g. a sheet
 broken out by mode or type-of-service), values are **summed** per year
 to produce one agency-total series — matching how NTD's own published
 summary statistics aggregate mode/TOS breakdowns into agency totals. A
@@ -151,16 +178,17 @@ year column with no numeric value for any matching row is omitted from
 the series for that year (not shown as zero), same convention as the
 dashboard's "scheduled trips per service day" series
 ([above](#static-html-dashboard-report-output)). If the `ntd_id` matches
-zero rows in a file, that metric's series is empty and its chart is
+zero rows in a sheet, that metric's series is empty and its chart is
 omitted with a note in `report ntd`'s output (see
 [below](#ntd-time-series-report-output)) — this is a normal, non-error
-outcome (a valid NTD ID legitimately absent from one particular metric
-file), unlike the "no NTD ID column found at all" case above, which
-means the file couldn't be parsed and fails loudly instead.
+outcome (a valid NTD ID legitimately absent from one particular sheet),
+unlike the "no NTD ID column found at all" or "no matching sheet" cases
+above, which mean the file/sheet couldn't be resolved and fail loudly
+instead.
 
-Before relying on this for real public reporting, verify a real
-downloaded NTD Time Series file against this assumed shape and update
-this section accordingly.
+Before relying on this for real public reporting, run `fetch-ntd`
+against the live endpoint and verify actual downloaded/parsed sheets
+against this assumed shape, updating this section accordingly.
 
 ## On-time performance report (output)
 

@@ -71,7 +71,7 @@ def build_ntd_report_data(
                 note=f"not yet fetched — run fetch-ntd (expected {path.name})",
             )
         else:
-            series_by_year = timeseries.read_agency_series(path, ntd_id)
+            series_by_year = timeseries.read_agency_series(path, ntd_id, sheet=source.sheet)
             if series_by_year:
                 series = sorted(series_by_year.items())
                 chart = NtdChartData(name=source.name, category=source.category, series=series, note=None)

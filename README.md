@@ -29,20 +29,23 @@ an even newer, similarly **unverified** guess at two additional TIDES
 CSV shapes — see
 [`specs/data-model.md`](specs/data-model.md#tides-data-for-the-eta-benchmarks-assumed-separate-files).
 
-NTD Time Series fetch/parsing (`fetch-ntd`, `report ntd`) is likewise
-implemented against a **documented, not-yet-verified assumption** about
-the shape of FTA's published Time Series spreadsheets — network access to
-`transit.dot.gov` was unavailable while building this feature. Parsing is
-deliberately resilient to exact-header-text drift (alias matching + a
-numeric-year-column test) rather than pinned to specific column names,
-but the example config's `ntd.time_series[].url` values are illustrative
-placeholders — see
-[`specs/architecture.md`](specs/architecture.md#ntd-time-series-data-access)
-and the module docstring in
+NTD Time Series fetch/parsing (`fetch-ntd`, `report ntd`) fetches by
+**scraping each data product's landing page** for its current `.xlsx`
+download link — FTA doesn't publish a stable direct URL, and this
+mirrors the same mechanism Caltrans' own
+[cal-itp/data-infra](https://github.com/cal-itp/data-infra) uses in its
+production NTD ingestion pipeline (confirmed by reading that project's
+source, since `transit.dot.gov` itself was egress-blocked while building
+this feature — see
+[`specs/architecture.md`](specs/architecture.md#ntd-time-series-data-access)).
+The four `product_url` landing pages in `config/example.yaml` are real,
+confirmed-live URLs; the per-metric `sheet:` values are a best-guess
+inferred from that same reference pipeline (not independently observed),
+so sheet matching is deliberately resilient (case/punctuation-insensitive,
+fails loudly listing the real sheet names on a miss) rather than pinned
+to exact text — see the module docstring in
 [`src/diy_transit_analysis/ntd/timeseries.py`](src/diy_transit_analysis/ntd/timeseries.py)
-before relying on it, and replace the placeholder URLs with the real
-current download links from
-[FTA's NTD Data page](https://www.transit.dot.gov/ntd/ntd-data).
+before relying on this for real reporting.
 
 This project follows [spec-driven development](CLAUDE.md) — `specs/` is
 the source of truth for intended behavior, `plans/` tracks work in flight.

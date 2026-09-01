@@ -47,7 +47,8 @@ class DateRange:
 class NtdTimeSeriesSource:
     name: str
     category: str  # one of _NTD_TIME_SERIES_CATEGORIES
-    url: str
+    product_url: str  # the data product's landing page, not a direct file link
+    sheet: str | None = None  # workbook tab to read; None = first sheet
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ def _parse_date_range(raw: object, *, field: str, errors: list[str]) -> DateRang
 
 def _parse_ntd_time_series_source(raw: object, *, field: str, errors: list[str]) -> NtdTimeSeriesSource | None:
     if not isinstance(raw, dict):
-        errors.append(f"{field}: must be a mapping (name, category, url)")
+        errors.append(f"{field}: must be a mapping (name, category, product_url)")
         return None
 
     name = raw.get("name")
@@ -142,20 +143,26 @@ def _parse_ntd_time_series_source(raw: object, *, field: str, errors: list[str])
         )
         category = None
 
-    url = raw.get("url")
-    if not isinstance(url, str) or not url:
-        errors.append(f"{field}.url: required, must be a non-empty string")
-        url = None
-    elif not url.startswith(_ALLOWED_URL_SCHEMES):
+    product_url = raw.get("product_url")
+    if not isinstance(product_url, str) or not product_url:
+        errors.append(f"{field}.product_url: required, must be a non-empty string")
+        product_url = None
+    elif not product_url.startswith(_ALLOWED_URL_SCHEMES):
         errors.append(
-            f"{field}.url: must start with http:// or https:// "
-            f"(public data only — see specs/principles.md#public-data-only), got {url!r}"
+            f"{field}.product_url: must start with http:// or https:// "
+            f"(public data only — see specs/principles.md#public-data-only), got {product_url!r}"
         )
-        url = None
+        product_url = None
 
-    if name is None or category is None or url is None:
+    sheet = raw.get("sheet")
+    sheet_ok = True
+    if sheet is not None and (not isinstance(sheet, str) or not sheet):
+        errors.append(f"{field}.sheet: must be a non-empty string if present")
+        sheet_ok = False
+
+    if name is None or category is None or product_url is None or not sheet_ok:
         return None
-    return NtdTimeSeriesSource(name=name, category=category, url=url)
+    return NtdTimeSeriesSource(name=name, category=category, product_url=product_url, sheet=sheet)
 
 
 def _parse_ntd(raw: object, *, field: str, errors: list[str]) -> NtdConfig | None:

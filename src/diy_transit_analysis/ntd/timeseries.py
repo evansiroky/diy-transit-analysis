@@ -1,80 +1,133 @@
 """Fetch and parse FTA National Transit Database (NTD) Time Series data files.
 
-ASSUMPTION, NOT VERIFIED AGAINST A LIVE DOWNLOAD: as of this writing,
-network access to transit.dot.gov (where NTD publishes its Time Series
-data products) was unavailable in this session. This module is written
-against a documented best-understanding of the published file shape —
-one wide table per configured metric, with an NTD-ID column and one
-column per reporting year — not a working integration test. Per
-specs/principles.md#fail-loud-on-unverified-assumptions, parsing is
-deliberately structural (column-alias matching, numeric year-column
-detection) rather than pinned to exact column header text, so it's
-resilient to header wording this project hasn't verified. Before relying
-on this for real public reporting, verify a real downloaded file against
-specs/data-model.md#ntd-time-series-data-on-disk-fetched and update that
-section accordingly.
+FTA doesn't publish a stable direct download URL for a Time Series
+workbook — the file linked from a data product's landing page changes on
+every release. This module scrapes the landing page for the current
+download link (an `<a>` whose `type` is the xlsx MIME type) the same way
+Caltrans' own cal-itp/data-infra NTD ingestion pipeline does
+(`airflow/plugins/hooks/ntd_xlsx_hook.py` in that repo) — see
+specs/architecture.md#ntd-time-series-data-access for the evidence this
+rests on.
+
+What's confirmed via that reference implementation: the base URL, the
+landing-page-scrape mechanism, and "one workbook, many sheets". What's
+still an ASSUMPTION, NOT VERIFIED AGAINST A LIVE DOWNLOAD in this
+project (transit.dot.gov was unreachable while writing this): the exact
+literal sheet-tab names and column header text. Per
+specs/principles.md#fail-loud-on-unverified-assumptions, both are
+matched structurally rather than pinned to exact strings — sheet names
+case/punctuation-insensitively, the NTD-ID column by alias, year columns
+by a numeric-header test — and a failure to match anything raises
+NtdDataError with what was actually found, rather than silently reading
+the wrong data. Before relying on this for real public reporting, run
+fetch-ntd against the live endpoint and verify against
+specs/data-model.md#ntd-time-series-data-on-disk-fetched.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 from diy_transit_analysis.config import NtdTimeSeriesSource
 
 _NTD_ID_COLUMN_ALIASES = {"ntd id", "5 digit ntd id", "ntdid"}
 _YEAR_RE = re.compile(r"^(\d{4})(\.0)?$")
-_DEFAULT_EXTENSION = ".xlsx"
-_SUPPORTED_EXTENSIONS = (".csv", ".xlsx", ".xls")
+_XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# Mirrors the User-Agent cal-itp/data-infra sends — some government sites
+# block requests with no browser-like User-Agent at all.
+_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+}
 
 
 class NtdDataError(RuntimeError):
-    """Raised when a fetched NTD Time Series file can't be parsed at all.
+    """Raised when an NTD Time Series product/file/sheet can't be resolved or parsed.
 
-    Reserved for "this file has no recognizable NTD ID column" — a file
-    that parses fine but has zero rows for the configured ntd_id is a
-    normal, non-error outcome (see read_agency_series), not this.
+    Covers: a landing page with no discoverable xlsx download link, a
+    configured `sheet` matching nothing in the workbook, or a sheet with
+    no recognizable NTD ID column. A sheet that parses fine but has zero
+    rows for the configured ntd_id is a normal, non-error outcome (see
+    read_agency_series), not this.
     """
 
 
-def _slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "source"
+def _landing_page_slug(product_url: str) -> str:
+    """A filesystem-safe slug from a data product's landing-page URL path.
 
-
-def _extension_for(url: str) -> str:
-    suffix = Path(urlparse(url).path).suffix.lower()
-    return suffix if suffix in _SUPPORTED_EXTENSIONS else _DEFAULT_EXTENSION
+    e.g. ".../ntd/data-product/ts21-service-data-and-operating-expenses-
+    time-series-mode-2" -> "ts21-service-data-and-operating-expenses-
+    time-series-mode-2" — these slugs are how FTA and cal-itp/data-infra
+    both stably identify a product, unlike the download link itself.
+    """
+    segment = Path(urlparse(product_url).path).name
+    slug = re.sub(r"[^a-z0-9]+", "-", segment.lower()).strip("-")
+    return slug or "product"
 
 
 def fetched_path(source: NtdTimeSeriesSource, dest_dir: Path) -> Path:
-    """The local path fetch_time_series writes (or would write) this source to.
+    """The local path fetch_time_series writes (or would write) this source's workbook to.
 
-    Public so callers (report/ntd.py) can locate an already-fetched file
-    without reaching into this module's private slug/extension logic.
+    Keyed by product_url's landing-page slug, not by source.name — every
+    entry sharing a product_url resolves to the same file (see
+    specs/data-model.md#ntd-time-series-data-on-disk-fetched). Public so
+    callers (report/ntd.py) can locate an already-fetched file without
+    reaching into this module's private slug logic.
     """
-    return dest_dir / f"{_slugify(source.name)}{_extension_for(source.url)}"
+    return dest_dir / f"{_landing_page_slug(source.product_url)}.xlsx"
+
+
+def resolve_download_url(product_url: str, *, timeout: float = 60.0) -> str:
+    """Scrape an NTD data-product landing page for its current xlsx download link.
+
+    See the module docstring — FTA doesn't publish a stable direct URL,
+    so this is the fetch mechanism cal-itp/data-infra's production NTD
+    pipeline uses against the real endpoint.
+    """
+    response = requests.get(product_url, headers=_REQUEST_HEADERS, timeout=timeout)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    link = soup.find("a", type=_XLSX_MIME_TYPE)
+    if link is None or not link.get("href"):
+        raise NtdDataError(
+            f"{product_url}: no <a type=\"{_XLSX_MIME_TYPE}\"> download link found on this landing page — "
+            "either this isn't an NTD data-product page, or FTA changed the page structure this project's "
+            "scrape assumption relies on (see ntd/timeseries.py module docstring)."
+        )
+    return urljoin(product_url, link["href"])
 
 
 def fetch_time_series(sources: list[NtdTimeSeriesSource], dest_dir: Path, *, timeout: float = 60.0) -> list[Path]:
-    """Download every configured NTD Time Series source to dest_dir.
+    """Download every uniquely-configured NTD Time Series product to dest_dir.
 
     Agency-independent — these files cover every NTD-reporting agency, so
     unlike fetch_schedule/fetch_historic this isn't namespaced under one
     agency's output directory (specs/architecture.md#ntd-time-series-
-    data-access). Each file is named by its slugified `name`, e.g.
-    "Unlinked Passenger Trips" -> unlinked-passenger-trips.xlsx.
+    data-access). Sources sharing a product_url are fetched once, not
+    once per source, since they're the same workbook.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
+    seen_product_urls: set[str] = set()
     for source in sources:
+        if source.product_url in seen_product_urls:
+            continue
+        seen_product_urls.add(source.product_url)
+
+        download_url = resolve_download_url(source.product_url, timeout=timeout)
         dest_path = fetched_path(source, dest_dir)
-        with requests.get(source.url, stream=True, timeout=timeout) as response:
+        with requests.get(download_url, headers=_REQUEST_HEADERS, stream=True, timeout=timeout) as response:
             response.raise_for_status()
             with dest_path.open("wb") as f:
                 for chunk in response.iter_content(chunk_size=1 << 16):
@@ -84,10 +137,31 @@ def fetch_time_series(sources: list[NtdTimeSeriesSource], dest_dir: Path, *, tim
     return written
 
 
-def _read_table(path: Path) -> pd.DataFrame:
+def _normalize_sheet_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _select_sheet(sheets: dict[str, pd.DataFrame], *, sheet: str | None, path: Path) -> pd.DataFrame:
+    if sheet is None:
+        return next(iter(sheets.values()))
+
+    wanted = _normalize_sheet_name(sheet)
+    for sheet_name, df in sheets.items():
+        if _normalize_sheet_name(sheet_name) == wanted:
+            return df
+
+    raise NtdDataError(
+        f"{path}: no sheet matching {sheet!r} found — this workbook has sheets {list(sheets.keys())!r}. "
+        "Sheet-name matching is case/punctuation-insensitive but the configured sheet still didn't match "
+        "any of them (see specs/data-model.md#ntd-time-series-data-on-disk-fetched)."
+    )
+
+
+def _read_table(path: Path, *, sheet: str | None) -> pd.DataFrame:
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path)
-    return pd.read_excel(path, sheet_name=0)
+    sheets = pd.read_excel(path, sheet_name=None)
+    return _select_sheet(sheets, sheet=sheet, path=path)
 
 
 def _find_ntd_id_column(df: pd.DataFrame, *, path: Path) -> str:
@@ -97,7 +171,7 @@ def _find_ntd_id_column(df: pd.DataFrame, *, path: Path) -> str:
     raise NtdDataError(
         f"{path}: no column matching a known NTD ID alias "
         f"({', '.join(sorted(_NTD_ID_COLUMN_ALIASES))}) found among columns {list(df.columns)!r} — "
-        "either this isn't an NTD Time Series file, or its real header text doesn't match this "
+        "either this isn't an NTD Time Series sheet, or its real header text doesn't match this "
         "project's assumed aliases (see ntd/timeseries.py module docstring)."
     )
 
@@ -119,19 +193,19 @@ def _normalize_id(value: object) -> str:
     return text
 
 
-def read_agency_series(path: Path, ntd_id: str) -> dict[int, float]:
-    """Read one fetched NTD Time Series file, filtered + summed for one agency.
+def read_agency_series(path: Path, ntd_id: str, *, sheet: str | None = None) -> dict[int, float]:
+    """Read one fetched NTD Time Series workbook's sheet, filtered + summed for one agency.
 
     Returns {year: value}, summing every row whose NTD ID column matches
-    `ntd_id` (a file broken out by mode/type-of-service contributes
+    `ntd_id` (a sheet broken out by mode/type-of-service contributes
     multiple rows per year — see specs/data-model.md#ntd-time-series-
     data-on-disk-fetched). A year with no numeric value from any matching
     row is omitted. An empty return value means this agency legitimately
-    has zero matching rows in this file — not an error. Raises
-    NtdDataError only when the file itself can't be parsed (no NTD ID
-    column found at all).
+    has zero matching rows in this sheet — not an error. Raises
+    NtdDataError when the sheet itself can't be resolved (no matching
+    sheet name, or no NTD ID column found at all).
     """
-    df = _read_table(path)
+    df = _read_table(path, sheet=sheet)
     id_column = _find_ntd_id_column(df, path=path)
     year_columns = _year_columns(df)
 

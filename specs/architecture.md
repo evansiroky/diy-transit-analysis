@@ -61,17 +61,20 @@ preserved for cross-project consistency, per
 output_dir: output
 
 # National, agency-independent NTD Time Series source files — see "NTD Time
-# Series data access" below. Whole block optional; each entry is one
-# downloadable file that becomes one chart, grouped into the `report ntd`
-# HTML report by its category.
+# Series data access" below. Whole block optional; each entry is one sheet
+# of one landing page's workbook, becoming one chart, grouped into the
+# `report ntd` HTML report by its category. Entries sharing a product_url
+# are fetched once (the download is the same file for both).
 ntd:
   time_series:
     - name: "Unlinked Passenger Trips"
       category: service
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/.../UPT_time_series.xlsx"
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "UPT"
     - name: "Vehicle Revenue Hours"
       category: service
-      url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/.../VRH_time_series.xlsx"
+      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
+      sheet: "VRH"
 
 agencies:
   SacRT:
@@ -157,55 +160,96 @@ Working assumptions, all flagged for verification:
 ## NTD Time Series data access
 
 **The Federal Transit Administration publishes "Time Series" data
-products** (`transit.dot.gov`'s NTD Data page) — one downloadable
-spreadsheet per metric, each covering every NTD-reporting agency across
-every year the metric has been collected (service, financial, and
-asset/fleet metrics going back to 1991 for the oldest series). Unlike
-GTFS or TIDES, this data is **agency-independent at fetch time**: one
-file covers every agency, and per-agency reporting is a filter applied
-at analysis time by the agency's **NTD ID** (a 5-digit code FTA assigns
-per reporting agency — SacRT's is `90019`).
+products** on `transit.dot.gov`'s NTD Data page — downloadable
+spreadsheets, each covering every NTD-reporting agency across every year
+the metric has been collected (service, financial, and asset/fleet
+metrics going back to 1991 for the oldest series). Unlike GTFS or TIDES,
+this data is **agency-independent at fetch time**: one file covers every
+agency, and per-agency reporting is a filter applied at analysis time by
+the agency's **NTD ID** (a 5-digit code FTA assigns per reporting
+agency — SacRT's is `90019`).
 
-**This project makes no attempt to hard-code which specific NTD files
-exist or their exact download URLs** — FTA's per-release file names and
-URLs are not stable across annual releases, and (per
-[principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions))
-this project won't present a guessed, possibly-stale URL as a settled
-fact. Instead, **every metric to chart is a config entry**: a `name` (used
-as the chart title), a `category` (`service`, `funding`, `expenditure`, or
-`asset` — which `report ntd` section it lands in), and the `url` to
-download it from, all supplied by the user (see
-[data-model.md#config-file](data-model.md#config-file)). This is the same
+**There is no stable direct download URL for an NTD Time Series
+file.** Each data product lives at a stable *landing page* URL (e.g.
+`https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-
+operating-expenses-time-series-mode-2`), but the actual `.xlsx` file
+linked from that page moves on every FTA release (a
+`/sites/fta.dot.gov/files/<release-date>/<Title>_<version>.xlsx`-style
+path). So fetching means **scraping the landing page for the current
+download link**, not requesting a fixed file URL. Confirmed via
+[cal-itp/data-infra](https://github.com/cal-itp/data-infra)'s production
+NTD ingestion pipeline (`airflow/plugins/hooks/ntd_xlsx_hook.py`,
+`airflow/dags/download_and_parse_ntd_xlsx.py`) — Caltrans' own transit
+data team, which runs this exact scrape weekly against the real
+endpoint. This project's `ntd/timeseries.py` follows the same mechanism:
+GET the landing page, find the `<a>` tag whose
+`type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`,
+and download its `href` — a plain HTTP GET each time, no auth, matching
+[principles.md#public-data-only](principles.md#public-data-only).
+
+**Each data product is one workbook with multiple sheets**, one sheet
+per metric (also confirmed via cal-itp/data-infra's ingestion, which
+reads every sheet with `pandas.read_excel(..., sheet_name=None)` and
+loads each as its own table). A config entry therefore names both the
+landing page (`product_url`) and which `sheet` within that workbook it
+wants — see [data-model.md#config-file](data-model.md#config-file).
+Multiple entries sharing the same `product_url` are fetched **once**
+(deduplicated by landing page) since they're genuinely the same
+download.
+
+**Every metric to chart is still a config entry**: `name` (chart title),
+`category` (`service`/`funding`/`expenditure`/`asset` — which `report
+ntd` section it lands in), `product_url`, and `sheet`. This is the same
 config-driven-onboarding principle GTFS/TIDES agencies already follow,
 generalized from "agency" to "metric source" — see
-[architecture.md#config-file-format](#config-file-format) above.
+[architecture.md#config-file-format](#config-file-format) above. Four
+`product_url` landing pages, confirmed live and hard-coded in
+cal-itp/data-infra's own DAG, cover this project's default chart set
+(`config/example.yaml`):
 
-**Assumed file shape, NOT verified against a live download this
-session** (network access to `transit.dot.gov` was unavailable while
-writing this spec — this is a documented best-understanding, not a
-working integration test; see
+| Landing page slug | Category of its sheets |
+|---|---|
+| `ts21-service-data-and-operating-expenses-time-series-mode-2` | service (`UPT`, `VRH`, `VOMS`, `VRM`, `PMT`, `DRM`) + expenditure (`OpExp_Total`, and the `OpExp_*` breakdowns) |
+| `ts12-operating-funding-time-series-3` | funding (`Operating_Total`, `Capital_Total`, and the federal/state/local/other breakdowns) |
+| `ts31-capital-expenditures-time-series-2` | expenditure (`Total`, and the facilities/rolling-stock/other breakdowns) |
+| `ts41-asset-inventory-time-series-4` | asset (`Active_Fleet`, `Avg_Fleet_Age`, and related fleet breakdowns) |
+
+**What's confirmed vs. still assumed** (per
 [principles.md#fail-loud-on-unverified-assumptions](principles.md#fail-loud-on-unverified-assumptions)):
+the base URL, the four landing-page slugs above, the scrape-the-landing-
+page mechanism, and "one workbook, many sheets" are all confirmed by
+reading a real, actively-run production consumer's source and recorded
+HTTP-interaction test fixtures (`transit.dot.gov` itself was
+egress-blocked in this session, so this project still hasn't made its
+own live request against it). **Not confirmed**: the exact literal sheet
+tab names (`config/example.yaml`'s `sheet:` values are inferred from
+cal-itp's BigQuery-safe column/table names, e.g. a dbt model named
+`..._time_series_by_mode__upt` implies a sheet along the lines of
+`UPT`, but the precise capitalization/spacing wasn't observed directly).
+Sheet-name matching in `ntd/timeseries.py` is therefore
+case/punctuation-insensitive (normalizes to lowercase alphanumerics
+before comparing) rather than exact-string, and fails loudly — listing
+every sheet the workbook actually has — when nothing matches, so a wrong
+guess surfaces immediately instead of misreading the wrong sheet
+silently.
 
-- Each downloaded file (`.xlsx` or `.csv`) is a **wide** table: one row
-  per reporting agency (further broken out by mode/type-of-service in
-  some files), one column identifying the agency by **NTD ID**, and one
-  column per **year** holding that metric's value for that agency in that
-  year.
-- Because exact column header text (e.g. `"NTD ID"` vs. `"5 Digit NTD
-  ID"`) and exact year-column formatting aren't verified, parsing is
-  **structural, not name-exact**: the NTD ID column is found by matching
-  a small set of known header aliases (case-insensitive), and year
-  columns are found by testing whether a header parses as a bare 4-digit
-  year — not by hard-coding an exact expected column list. See
+- Within a sheet, the shape is a **wide** table: one row per reporting
+  agency (further broken out by mode/type-of-service in some files), one
+  column identifying the agency by **NTD ID**, and one column per
+  **year** holding that metric's value for that agency in that year.
+- The NTD ID column is found by matching a small set of known header
+  aliases (case-insensitive) — column header text is unconfirmed too.
+  Year columns are found by testing whether a header parses as a bare
+  4-digit year, not by hard-coding an exact expected column list. See
   [data-model.md#ntd-time-series-data-on-disk-fetched](data-model.md#ntd-time-series-data-on-disk-fetched)
   for the full parsing rule.
-- A file may have more than one row for the configured NTD ID (e.g. one
+- A sheet may have more than one row for the configured NTD ID (e.g. one
   row per mode or type-of-service); these are summed per year to produce
   one agency-total annual series, matching how NTD's own summary
   statistics aggregate mode/TOS breakdowns into agency totals.
-- Before relying on this for real public reporting, verify actual
-  downloaded NTD Time Series files against this assumed shape and update
-  this section accordingly.
+- Before relying on this for real public reporting, run `fetch-ntd`
+  against the live endpoint and verify actual downloaded/parsed sheets
+  against this assumed shape, updating this section accordingly.
 
 ## Output format
 

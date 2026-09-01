@@ -163,24 +163,35 @@ Out of scope:
 - [x] Unit test: `run` on an agency with neither `ntd_id` nor a top-level `ntd:` block configured prints a skip message and succeeds (mirrors the existing GTFS-only `run` test). Extended `test_run_on_gtfs_only_agency_produces_schedule_stats_and_dashboard_only` with NTD-skip assertions.
 - [x] Unit test: `run` on an agency with both configured produces the `ntd-*.html` report alongside the existing reports. `test_run_on_full_agency_with_ntd_produces_ntd_report`.
 - [x] `dashboard.py`'s existing test suite (`tests/test_dashboard.py`) passes unmodified after the `html_charts.py` extraction — confirms the refactor is behavior-preserving. One test (`test_nice_ticks_never_produces_duplicate_labels`) had to move to a new `tests/test_html_charts.py` since it reached into the function directly and that function moved; every other dashboard test file was untouched and passes as-is.
-- [x] `pytest` passes in full. 73 passed (`pytest -q`).
+- [x] `pytest` passes in full. 81 passed (`pytest -q`), after the landing-page-scrape upgrade below.
+- [x] `fetch_time_series` scrapes each data product's landing page for its live `.xlsx` download link (mirroring cal-itp/data-infra's `NTDXLSXHook`) rather than requiring a pre-resolved file URL, and dedupes entries sharing a `product_url` to one download. `test_resolve_download_url_finds_xlsx_link`, `test_resolve_download_url_resolves_relative_href_against_landing_page`, `test_fetch_time_series_dedupes_sources_sharing_a_product_url`. Also verified end-to-end via a manual `run` smoke test against a copy of `config/example.yaml`'s real 4-landing-page, 9-entry config (network calls mocked at the `requests.get` layer): 9 configured entries correctly deduped to 4 downloads, all 9 charts rendered.
+- [x] `read_agency_series` selects a specific sheet from a multi-sheet workbook by `sheet:`, matching case/punctuation-insensitively, and raises `NtdDataError` listing the workbook's real sheet names when nothing matches. `test_read_agency_series_selects_named_sheet_from_multi_sheet_workbook`, `test_read_agency_series_sheet_matching_is_case_and_punctuation_insensitive`, `test_read_agency_series_raises_with_available_sheets_when_sheet_not_found`, `test_read_agency_series_defaults_to_first_sheet_when_none_configured`.
 
 ## Risks / unknowns
 
-- **NTD Time Series file/column shape is unverified** — `transit.dot.gov`
-  was unreachable (egress-blocked) while researching this plan, so the
-  assumed structure (wide table, NTD-ID column + year columns, one file
-  per metric) is based on general familiarity with NTD's long-published
-  data-product conventions, not a live download. The alias-matching +
-  numeric-year-column detection approach is deliberately resilient to
-  header-text drift, but if FTA's real files group multiple metrics into
-  one workbook (multiple sheets) rather than one metric per file, this
-  plan's "read first sheet only" assumption would need a follow-up fix
-  to scan all sheets.
-- **`openpyxl` dependency** — new transitive requirement for `.xlsx`
-  reads; CSV-only NTD sources (if a user re-hosts/converts files) work
-  without it, but the default `pandas.read_excel` path needs it
-  installed.
+- **NTD Time Series sheet/column shape is unverified** — `transit.dot.gov`
+  was unreachable (egress-blocked) in every attempt this session (direct
+  fetch, and via the CCR agent proxy), so nothing here is checked against
+  a live download. What *is* now evidence-backed rather than guessed: the
+  base URL, the four `product_url` landing-page slugs shipped in
+  `config/example.yaml`, the "scrape the landing page for the current
+  xlsx link" fetch mechanism, and "one workbook, many sheets" — all
+  confirmed by reading Caltrans' own
+  [cal-itp/data-infra](https://github.com/cal-itp/data-infra) NTD
+  ingestion pipeline source and its recorded HTTP-interaction test
+  cassettes (a real, actively-run production consumer of this exact
+  data). Still an inferred guess, not observed directly: the literal
+  sheet tab-name text in `config/example.yaml`'s `sheet:` fields (derived
+  from cal-itp's BigQuery-safe column names, e.g. `..._upt` implying a
+  sheet near `"UPT"`) and the NTD-ID/year column header text within a
+  sheet. Both are matched structurally (case/punctuation-insensitive
+  sheet matching; alias + numeric-header detection for columns) and fail
+  loudly rather than silently misreading, per this plan's Scope.
+- **`openpyxl`/`beautifulsoup4` dependencies** — `openpyxl` is pandas'
+  `.xlsx` read engine; `beautifulsoup4` parses the landing-page HTML for
+  the download link (same library cal-itp/data-infra uses for the same
+  purpose). CSV-only NTD sources (if a user re-hosts/converts files)
+  don't need `openpyxl`, but every real NTD landing page needs both.
 
 ## Notes
 
@@ -200,27 +211,46 @@ Out of scope:
   SVG math. `dashboard.py`'s own behavior is unchanged (its full test
   suite passes unmodified except for the one test that reached into a
   moved private function — see Validation).
-- `ntd.time_series[].url` values in `config/example.yaml` are
-  illustrative placeholders (clearly commented as such), not real current
-  FTA download links — same treatment as `config/example.yaml`'s existing
-  `tides.gcs_bucket` placeholder for the same reason (unverifiable this
-  session).
 - Added `ntd/timeseries.fetched_path()` as a small public seam (not in
   the original Approach) so `report/ntd.py` could locate an
   already-fetched file without reaching into `ntd/timeseries.py`'s
   private slug/extension helpers — a natural extension of the Approach's
   fetch/read split, not a scope change.
+- **Second implementation round, same plan (not re-opened as a new plan
+  since nothing had merged yet):** the user pointed at
+  [cal-itp/data-infra](https://github.com/cal-itp/data-infra) as a
+  reference for how a real production system fetches this data. Reading
+  its `airflow/plugins/hooks/ntd_xlsx_hook.py`,
+  `airflow/dags/download_and_parse_ntd_xlsx.py`, and
+  `airflow/plugins/operators/scrape_ntd_xlsx.py` (plus its recorded VCR
+  test cassettes, which capture real historical HTTP responses) showed
+  two things the first round's Risks section had already flagged as
+  possible but unconfirmed: (1) there's no stable direct download URL —
+  the real mechanism is scraping a stable landing page for the
+  current-release link, and (2) FTA does bundle multiple metrics as
+  sheets in one workbook rather than one file per metric. Both are now
+  built accordingly: config's `ntd.time_series[].url` became
+  `product_url` (a landing page) + `sheet`, `ntd/timeseries.py` gained
+  `resolve_download_url()` (BeautifulSoup scrape for
+  `<a type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">`)
+  and multi-sheet-aware `read_agency_series(..., sheet=...)`, and
+  `fetch_time_series` dedupes by `product_url`. `config/example.yaml` now
+  ships the four real, confirmed-live landing-page URLs cal-itp/data-infra
+  itself hard-codes, covering all 9 of this project's default charts.
+  This is a materially stronger evidentiary basis than the first round's
+  pure documentation-review guess, even though the exact sheet-name text
+  is still unconfirmed (see Risks).
 
 ## Follow-ups
 
-- Tracked as: verifying the NTD Time Series file/column shape against a
-  real FTA download once `transit.dot.gov` is reachable, and updating
-  `specs/architecture.md#ntd-time-series-data-access` +
+- Tracked as: verifying the exact NTD sheet tab-name text and NTD-ID/year
+  column header text against a real `fetch-ntd` run once
+  `transit.dot.gov` is reachable (the landing-page URLs and scrape
+  mechanism are now evidence-backed, not a guess — see Risks), and
+  updating `specs/architecture.md#ntd-time-series-data-access` +
   `specs/data-model.md#ntd-time-series-data-on-disk-fetched` accordingly
   — same shape as `plans/data-fetch.md`'s still-open TIDES-bucket-
-  verification follow-up. Until then, treat `config/example.yaml`'s
-  `ntd.time_series[].url` values as placeholders to replace with real
-  links from FTA's NTD Data page.
+  verification follow-up.
 - Tracked as: a per-mode/per-TOS breakdown view, if a user wants more
   than the agency-total annual series this MVP charts (out of scope per
   this plan's Scope).

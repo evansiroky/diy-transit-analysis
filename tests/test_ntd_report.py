@@ -10,16 +10,28 @@ from diy_transit_analysis.report import ntd
 
 def _sources() -> list[NtdTimeSeriesSource]:
     return [
-        NtdTimeSeriesSource(name="Unlinked Passenger Trips", category="service", url="https://example.org/upt.csv"),
-        NtdTimeSeriesSource(name="Vehicle Revenue Hours", category="service", url="https://example.org/vrh.csv"),
-        NtdTimeSeriesSource(name="Operating Expenses", category="expenditure", url="https://example.org/opex.csv"),
-        NtdTimeSeriesSource(name="Total Funding", category="funding", url="https://example.org/funding.csv"),
-        NtdTimeSeriesSource(name="Total Fleet Vehicles", category="asset", url="https://example.org/fleet.csv"),
+        NtdTimeSeriesSource(
+            name="Unlinked Passenger Trips", category="service", product_url="https://example.org/data-product/upt"
+        ),
+        NtdTimeSeriesSource(
+            name="Vehicle Revenue Hours", category="service", product_url="https://example.org/data-product/vrh"
+        ),
+        NtdTimeSeriesSource(
+            name="Operating Expenses",
+            category="expenditure",
+            product_url="https://example.org/data-product/opex",
+        ),
+        NtdTimeSeriesSource(
+            name="Total Funding", category="funding", product_url="https://example.org/data-product/funding"
+        ),
+        NtdTimeSeriesSource(
+            name="Total Fleet Vehicles", category="asset", product_url="https://example.org/data-product/fleet"
+        ),
     ]
 
 
 def _write(source: NtdTimeSeriesSource, raw_dir: Path, rows: list[dict]) -> None:
-    pd.DataFrame(rows).to_csv(fetched_path(source, raw_dir), index=False)
+    pd.DataFrame(rows).to_excel(fetched_path(source, raw_dir), index=False)
 
 
 def test_build_ntd_report_data_groups_by_category_and_computes_year_range(tmp_path: Path):
@@ -72,7 +84,7 @@ def test_build_ntd_report_data_raises_ntddataerror_for_unparseable_file(tmp_path
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     sources = [_sources()[0]]
-    pd.DataFrame([{"Agency": "SacRT", "2020": 1.0}]).to_csv(fetched_path(sources[0], raw_dir), index=False)
+    pd.DataFrame([{"Agency": "SacRT", "2020": 1.0}]).to_excel(fetched_path(sources[0], raw_dir), index=False)
 
     with pytest.raises(NtdDataError):
         ntd.build_ntd_report_data(sources, raw_dir, agency="SacRT", ntd_id="90019")
