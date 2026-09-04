@@ -28,6 +28,14 @@ agencies:
       end: "2026-01-05"
 """
 
+FULL_CONFIG_WITH_NTD = """
+output_dir: output
+agencies:
+  Bar:
+    gtfs_schedule_url: "https://example.org/gtfs.zip"
+    ntd_id: "90019"
+"""
+
 
 def _fake_fetch_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the real (network) fetch with a copy of the local fixture zip."""
@@ -39,6 +47,37 @@ def _fake_fetch_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
         return dest_path
 
     monkeypatch.setattr(cli.gtfs_schedule, "fetch_schedule", _copy_fixture)
+
+
+def _fake_fetch_time_series(monkeypatch: pytest.MonkeyPatch, *, ntd_id: str = "90019") -> None:
+    """Replace the real (network scrape + download) NTD fetch with small hand-built workbooks.
+
+    Writes one workbook per unique product_url, with one sheet per
+    distinct `sheet` name among the sources sharing that product_url
+    (falling back to a single default sheet when `sheet` is None) — so
+    it works whether it's fed a single test source or the real
+    multi-sheet DEFAULT_TIME_SERIES_SOURCES catalog.
+    """
+
+    def _write_all(sources, dest_dir: Path, *, timeout: float = 60.0):
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        written = []
+        seen = set()
+        for source in sources:
+            if source.product_url in seen:
+                continue
+            seen.add(source.product_url)
+            path = cli.ntd_timeseries.fetched_path(source, dest_dir)
+            sheet_names = {s.sheet or "Sheet1" for s in sources if s.product_url == source.product_url}
+            with pd.ExcelWriter(path) as writer:
+                for sheet_name in sheet_names:
+                    pd.DataFrame([{"NTD ID": ntd_id, "2020": 100.0, "2021": 110.0}]).to_excel(
+                        writer, sheet_name=sheet_name, index=False
+                    )
+            written.append(path)
+        return written
+
+    monkeypatch.setattr(cli.ntd_timeseries, "fetch_time_series", _write_all)
 
 
 def test_run_on_gtfs_only_agency_produces_schedule_stats_and_dashboard_only(
@@ -63,6 +102,8 @@ def test_run_on_gtfs_only_agency_produces_schedule_stats_and_dashboard_only(
     out = capsys.readouterr().out
     assert "Skipped TIDES fetch and the on-time-performance report" in out
     assert "agencies.Bar.tides is not configured" in out
+    assert "Skipped NTD fetch and the NTD Time Series report" in out
+    assert "agencies.Bar.ntd_id is not configured" in out
 
 
 def test_run_on_full_agency_produces_both_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -139,3 +180,62 @@ def test_report_otp_on_gtfs_only_agency_fails_with_clear_message(tmp_path: Path)
 
     with pytest.raises(SystemExit, match=r"agencies\.Bar\.tides is not configured"):
         cli.main(["report", "otp", "--config", str(config_path), "--agency", "Bar"])
+
+
+def test_run_on_full_agency_with_ntd_produces_ntd_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(FULL_CONFIG_WITH_NTD)
+    _fake_fetch_schedule(monkeypatch)
+    _fake_fetch_time_series(monkeypatch)
+
+    exit_code = cli.main(["run", "--config", str(config_path), "--agency", "Bar"])
+
+    assert exit_code == 0
+    reports_dir = tmp_path / "output" / "reports" / "Bar"
+    ntd_reports = list(reports_dir.glob("ntd-*.html"))
+    assert ntd_reports
+    assert "Unlinked Passenger Trips" in ntd_reports[0].read_text()
+
+
+def test_fetch_ntd_then_report_ntd_standalone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(FULL_CONFIG_WITH_NTD)
+    _fake_fetch_time_series(monkeypatch)
+
+    fetch_exit_code = cli.main(["fetch-ntd", "--config", str(config_path), "--agency", "Bar"])
+    assert fetch_exit_code == 0
+    assert list((tmp_path / "output" / "ntd" / "raw").glob("*.xlsx"))
+
+    report_exit_code = cli.main(["report", "ntd", "--config", str(config_path), "--agency", "Bar"])
+    assert report_exit_code == 0
+    reports_dir = tmp_path / "output" / "reports" / "Bar"
+    assert list(reports_dir.glob("ntd-*.html"))
+
+
+def test_fetch_ntd_works_with_no_ntd_related_config_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # fetch-ntd always fetches the built-in catalog — no ntd_id, no other
+    # NTD config needed, even on an otherwise GTFS-only agency.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(GTFS_ONLY_CONFIG)
+    _fake_fetch_time_series(monkeypatch)
+
+    exit_code = cli.main(["fetch-ntd", "--config", str(config_path), "--agency", "Bar"])
+
+    assert exit_code == 0
+    assert list((tmp_path / "output" / "ntd" / "raw").glob("*.xlsx"))
+
+
+def test_report_ntd_without_ntd_id_fails_with_clear_message(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(FULL_CONFIG_WITH_NTD.replace('    ntd_id: "90019"\n', ""))
+
+    with pytest.raises(SystemExit, match=r"agencies\.Bar\.ntd_id is not configured"):
+        cli.main(["report", "ntd", "--config", str(config_path), "--agency", "Bar"])
+
+
+def test_report_ntd_on_configured_but_not_fetched_fails_with_clear_message(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(FULL_CONFIG_WITH_NTD)
+
+    with pytest.raises(SystemExit, match=r"ntd.*raw.*not found"):
+        cli.main(["report", "ntd", "--config", str(config_path), "--agency", "Bar"])

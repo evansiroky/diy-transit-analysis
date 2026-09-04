@@ -103,3 +103,20 @@ def test_tides_block_still_validates_its_own_fields_when_present(tmp_path: Path)
 
     with pytest.raises(ConfigError, match="gcp_billing_project"):
         load_config(config_path)
+
+
+def test_agency_ntd_id_is_optional_and_independent_of_other_blocks(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(GOOD_CONFIG.replace("gtfs_schedule_url:", 'ntd_id: "90019"\n    gtfs_schedule_url:'))
+
+    config = load_config(config_path)
+
+    assert get_agency(config, "Foo").ntd_id == "90019"
+
+
+def test_agency_ntd_id_must_be_non_empty_string(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(GOOD_CONFIG.replace("gtfs_schedule_url:", "ntd_id: 90019\n    gtfs_schedule_url:"))
+
+    with pytest.raises(ConfigError, match="ntd_id"):
+        load_config(config_path)

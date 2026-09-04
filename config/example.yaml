@@ -13,6 +13,13 @@ agencies:
     # Live, public GTFS Schedule feed (verified reachable as of this commit).
     gtfs_schedule_url: "http://iportal.sacrt.com/GTFS/SRTD/google_transit.zip"
 
+    # FTA's 5-digit NTD ID for SacRT — the only config `report ntd`/`fetch-ntd`
+    # need. Which NTD metrics get fetched and charted is a fixed, built-in
+    # catalog (src/diy_transit_analysis/ntd/timeseries.py's
+    # DEFAULT_TIME_SERIES_SOURCES), not something to configure per agency —
+    # see specs/architecture.md#ntd-time-series-data-access for why.
+    ntd_id: "90019"
+
     tides:
       # ASSUMED SHAPE, NOT VERIFIED against the live tides.dds.dot.ca.gov
       # bucket — see specs/architecture.md#tides-historic-data-access and

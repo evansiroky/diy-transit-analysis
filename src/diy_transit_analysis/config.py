@@ -48,6 +48,7 @@ class AgencyConfig:
     gtfs_schedule_url: str
     tides: TidesConfig | None
     date_range: DateRange | None
+    ntd_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +144,17 @@ def _parse_agency(name: str, raw: object, *, errors: list[str]) -> AgencyConfig 
         date_range = _parse_date_range(raw.get("date_range"), field=f"{field}.date_range", errors=errors)
         date_range_ok = date_range is not None
 
-    if gtfs_schedule_url is None or not tides_ok or not date_range_ok:
+    # ntd_id is independent of every other block, same optional-field
+    # pattern as agency_prefix within tides: (specs/behaviors/config-
+    # validation.md) — no format beyond "non-empty string" is enforced.
+    ntd_id = raw.get("ntd_id")
+    ntd_id_ok = True
+    if ntd_id is not None:
+        if not isinstance(ntd_id, str) or not ntd_id:
+            errors.append(f"{field}.ntd_id: must be a non-empty string if present")
+            ntd_id_ok = False
+
+    if gtfs_schedule_url is None or not tides_ok or not date_range_ok or not ntd_id_ok:
         return None
 
     return AgencyConfig(
@@ -151,6 +162,7 @@ def _parse_agency(name: str, raw: object, *, errors: list[str]) -> AgencyConfig 
         gtfs_schedule_url=gtfs_schedule_url,
         tides=tides,
         date_range=date_range,
+        ntd_id=ntd_id,
     )
 
 
