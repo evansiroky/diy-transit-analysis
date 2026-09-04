@@ -13,15 +13,18 @@ pr:
 
 ## Scope
 
-In scope: a config-driven way to fetch FTA National Transit Database
-(NTD) "Time Series" data files and chart them per agency (identified by
-`ntd_id`), producing a self-contained HTML report (`report ntd`) with
-service, expenditure, funding, and asset sections — per
+In scope: fetching FTA National Transit Database (NTD) "Time Series" data
+files and charting them per agency (identified by `ntd_id`), producing a
+self-contained HTML report (`report ntd`) with service, expenditure,
+funding, and asset sections — per
 `specs/data-model.md#ntd-time-series-report-output` and
 `specs/architecture.md#ntd-time-series-data-access`. New `ntd/` fetch
 module, new `report/ntd.py`, a `report/html_charts.py` extraction shared
 with `report/dashboard.py`, `fetch-ntd`/`report ntd` CLI subcommands, and
-`run` integration.
+`run` integration. **Which metrics get charted is a built-in catalog in
+code, not user config** — see Notes for why this landed differently than
+the plan's first two rounds assumed; `ntd_id` is the only NTD-related
+config field.
 
 Out of scope:
 - Verifying the assumed NTD Time Series file/column shape against a real
@@ -166,6 +169,8 @@ Out of scope:
 - [x] `pytest` passes in full. 81 passed (`pytest -q`), after the landing-page-scrape upgrade below.
 - [x] `fetch_time_series` scrapes each data product's landing page for its live `.xlsx` download link (mirroring cal-itp/data-infra's `NTDXLSXHook`) rather than requiring a pre-resolved file URL, and dedupes entries sharing a `product_url` to one download. `test_resolve_download_url_finds_xlsx_link`, `test_resolve_download_url_resolves_relative_href_against_landing_page`, `test_fetch_time_series_dedupes_sources_sharing_a_product_url`. Also verified end-to-end via a manual `run` smoke test against a copy of `config/example.yaml`'s real 4-landing-page, 9-entry config (network calls mocked at the `requests.get` layer): 9 configured entries correctly deduped to 4 downloads, all 9 charts rendered.
 - [x] `read_agency_series` selects a specific sheet from a multi-sheet workbook by `sheet:`, matching case/punctuation-insensitively, and raises `NtdDataError` listing the workbook's real sheet names when nothing matches. `test_read_agency_series_selects_named_sheet_from_multi_sheet_workbook`, `test_read_agency_series_sheet_matching_is_case_and_punctuation_insensitive`, `test_read_agency_series_raises_with_available_sheets_when_sheet_not_found`, `test_read_agency_series_defaults_to_first_sheet_when_none_configured`.
+- [x] The only NTD-related config field a user can set is `agencies.<name>.ntd_id`; which metrics get fetched/charted is `ntd.timeseries.DEFAULT_TIME_SERIES_SOURCES`, a fixed catalog in code. `fetch-ntd` requires no NTD-related config at all (works against a plain GTFS-only agency). `test_default_time_series_sources_is_well_formed`, `test_fetch_ntd_works_with_no_ntd_related_config_at_all`; `config/example.yaml`'s NTD-related config is now exactly one line (`ntd_id: "90019"`).
+- [x] `pytest` passes in full. 76 passed (`pytest -q`), after moving the catalog from config to code.
 
 ## Risks / unknowns
 
@@ -181,12 +186,13 @@ Out of scope:
   ingestion pipeline source and its recorded HTTP-interaction test
   cassettes (a real, actively-run production consumer of this exact
   data). Still an inferred guess, not observed directly: the literal
-  sheet tab-name text in `config/example.yaml`'s `sheet:` fields (derived
-  from cal-itp's BigQuery-safe column names, e.g. `..._upt` implying a
-  sheet near `"UPT"`) and the NTD-ID/year column header text within a
-  sheet. Both are matched structurally (case/punctuation-insensitive
-  sheet matching; alias + numeric-header detection for columns) and fail
-  loudly rather than silently misreading, per this plan's Scope.
+  sheet tab-name text in `ntd/timeseries.py`'s `DEFAULT_TIME_SERIES_SOURCES`
+  catalog (derived from cal-itp's BigQuery-safe column names, e.g.
+  `..._upt` implying a sheet near `"UPT"`) and the NTD-ID/year column
+  header text within a sheet. Both are matched structurally
+  (case/punctuation-insensitive sheet matching; alias + numeric-header
+  detection for columns) and fail loudly rather than silently
+  misreading, per this plan's Scope.
 - **`openpyxl`/`beautifulsoup4` dependencies** — `openpyxl` is pandas'
   `.xlsx` read engine; `beautifulsoup4` parses the landing-page HTML for
   the download link (same library cal-itp/data-infra uses for the same
@@ -240,6 +246,29 @@ Out of scope:
   This is a materially stronger evidentiary basis than the first round's
   pure documentation-review guess, even though the exact sheet-name text
   is still unconfirmed (see Risks).
+- **Third implementation round, same plan (still nothing merged):** the
+  user pointed out that shipping `ntd.time_series[]` as user config (even
+  pre-filled in `config/example.yaml`) shoulders this project's own
+  NTD-integration maintenance onto every end user — copying four
+  landing-page URLs and nine sheet names into their own config just to
+  get the default chart set, and re-doing that copy by hand whenever a
+  metric's sheet guess needed fixing. Unlike `gtfs_schedule_url` or
+  `tides:` (genuinely per-agency data), NTD Time Series metrics are the
+  same national catalog for every agency — so config-driven onboarding
+  didn't actually fit here, it was over-applied by generalizing that
+  principle from "agency" to "any data source" in the first two rounds.
+  Fix: moved `NtdTimeSeriesSource` and the 9-entry catalog
+  (`DEFAULT_TIME_SERIES_SOURCES`) from `config.py`/YAML into
+  `ntd/timeseries.py` as a plain code constant; deleted the top-level
+  `ntd:` block, `NtdConfig`, `_parse_ntd*`, and every category/URL/sheet
+  validation rule that existed only to validate that block.
+  `agencies.<name>.ntd_id` is now the *only* NTD-related config field —
+  `fetch-ntd` needs no config at all (works on a bare GTFS-only agency),
+  `report ntd`/`run`'s NTD step need only `ntd_id`. `specs/architecture.md`
+  gained a catalog table (the spec-tracked source of truth
+  `DEFAULT_TIME_SERIES_SOURCES` must match) and an explicit note on why
+  this metric catalog is deliberately *not* config-driven, unlike
+  agency-level data.
 
 ## Follow-ups
 

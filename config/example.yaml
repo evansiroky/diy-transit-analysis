@@ -8,70 +8,16 @@
 
 output_dir: output
 
-# National, agency-independent NTD (National Transit Database) Time Series
-# source files. Whole block optional (specs/behaviors/config-validation.md);
-# each entry is one sheet of one data product's workbook, becoming one chart
-# in `report ntd`'s output, grouped by category. Entries sharing a
-# product_url are fetched once (fetch-ntd scrapes each landing page for its
-# current .xlsx download link — see specs/architecture.md#ntd-time-series-
-# data-access and src/diy_transit_analysis/ntd/timeseries.py).
-#
-# The four product_url landing pages below are CONFIRMED live URLs (used by
-# Caltrans' own cal-itp/data-infra NTD ingestion pipeline, which this
-# project's fetch mechanism mirrors — see architecture.md). The `sheet:`
-# values are NOT independently confirmed — they're inferred from that same
-# pipeline's derived column names, not observed directly in a downloaded
-# workbook. Sheet matching is case/punctuation-insensitive and fails loudly
-# (listing the workbook's real sheet names) if a guess is wrong, so a bad
-# `sheet:` value surfaces immediately rather than silently reading the
-# wrong tab — see the module docstring for details.
-ntd:
-  time_series:
-    - name: "Unlinked Passenger Trips"
-      category: service
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
-      sheet: "UPT"                # ASSUMED sheet name, verify
-    - name: "Vehicle Revenue Hours"
-      category: service
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
-      sheet: "VRH"                # ASSUMED sheet name, verify
-    - name: "Vehicles Operated in Maximum Service"
-      category: service
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
-      sheet: "VOMS"               # ASSUMED sheet name, verify
-    - name: "Operating Expenses"
-      category: expenditure
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts21-service-data-and-operating-expenses-time-series-mode-2"
-      sheet: "OpExp_Total"        # ASSUMED sheet name, verify
-    - name: "Capital Expenditures"
-      category: expenditure
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts31-capital-expenditures-time-series-2"
-      sheet: "Total"              # ASSUMED sheet name, verify
-    - name: "Total Operating Funding"
-      category: funding
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts12-operating-funding-time-series-3"
-      sheet: "Operating_Total"    # ASSUMED sheet name, verify
-    - name: "Total Capital Funding"
-      category: funding
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts12-operating-funding-time-series-3"
-      sheet: "Capital_Total"      # ASSUMED sheet name, verify
-    - name: "Active Fleet Size"
-      category: asset
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts41-asset-inventory-time-series-4"
-      sheet: "Active_Fleet"       # ASSUMED sheet name, verify
-    - name: "Average Fleet Age"
-      category: asset
-      product_url: "https://www.transit.dot.gov/ntd/data-product/ts41-asset-inventory-time-series-4"
-      sheet: "Avg_Fleet_Age"      # ASSUMED sheet name, verify
-
 agencies:
   SacRT:
     # Live, public GTFS Schedule feed (verified reachable as of this commit).
     gtfs_schedule_url: "http://iportal.sacrt.com/GTFS/SRTD/google_transit.zip"
 
-    # FTA's 5-digit NTD ID for SacRT, used to filter the shared ntd.time_series
-    # files above down to this agency. Required for `report ntd`/the NTD
-    # portion of `run`; not required just to `fetch-ntd`.
+    # FTA's 5-digit NTD ID for SacRT — the only config `report ntd`/`fetch-ntd`
+    # need. Which NTD metrics get fetched and charted is a fixed, built-in
+    # catalog (src/diy_transit_analysis/ntd/timeseries.py's
+    # DEFAULT_TIME_SERIES_SOURCES), not something to configure per agency —
+    # see specs/architecture.md#ntd-time-series-data-access for why.
     ntd_id: "90019"
 
     tides:

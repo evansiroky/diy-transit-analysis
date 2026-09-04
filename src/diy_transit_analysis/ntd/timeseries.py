@@ -9,11 +9,20 @@ Caltrans' own cal-itp/data-infra NTD ingestion pipeline does
 specs/architecture.md#ntd-time-series-data-access for the evidence this
 rests on.
 
-What's confirmed via that reference implementation: the base URL, the
-landing-page-scrape mechanism, and "one workbook, many sheets". What's
-still an ASSUMPTION, NOT VERIFIED AGAINST A LIVE DOWNLOAD in this
-project (transit.dot.gov was unreachable while writing this): the exact
-literal sheet-tab names and column header text. Per
+Which metrics get fetched/charted (DEFAULT_TIME_SERIES_SOURCES below) is
+a fixed catalog here in code, not something read from a user's config
+file — see specs/architecture.md#ntd-time-series-data-access for why:
+unlike an agency's GTFS/TIDES URLs, this isn't per-agency data, so
+putting it in every user's config would just shift this project's own
+data-source integration work onto them. Adding/fixing a catalog entry is
+a spec change (specs/architecture.md's catalog table) followed by
+editing this list, like any other spec-led behavior change.
+
+What's confirmed via cal-itp/data-infra's reference implementation: the
+base URL, the landing-page-scrape mechanism, and "one workbook, many
+sheets". What's still an ASSUMPTION, NOT VERIFIED AGAINST A LIVE
+DOWNLOAD in this project (transit.dot.gov was unreachable while writing
+this): the exact literal sheet-tab names and column header text. Per
 specs/principles.md#fail-loud-on-unverified-assumptions, both are
 matched structurally rather than pinned to exact strings — sheet names
 case/punctuation-insensitively, the NTD-ID column by alias, year columns
@@ -27,6 +36,7 @@ specs/data-model.md#ntd-time-series-data-on-disk-fetched.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -34,11 +44,54 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from diy_transit_analysis.config import NtdTimeSeriesSource
-
 _NTD_ID_COLUMN_ALIASES = {"ntd id", "5 digit ntd id", "ntdid"}
 _YEAR_RE = re.compile(r"^(\d{4})(\.0)?$")
 _XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_NTD_BASE_URL = "https://www.transit.dot.gov/ntd/data-product"
+
+
+@dataclass(frozen=True)
+class NtdTimeSeriesSource:
+    name: str
+    category: str  # "service" | "funding" | "expenditure" | "asset"
+    product_url: str  # the data product's landing page, not a direct file link
+    sheet: str | None = None  # workbook tab to read; None = first sheet
+
+
+def _product_url(slug: str) -> str:
+    return f"{_NTD_BASE_URL}/{slug}"
+
+
+# The built-in NTD Time Series catalog — see specs/architecture.md#ntd-
+# time-series-data-access for the source table this must match and the
+# evidence behind each product_url. Four landing pages, deduplicated at
+# fetch time by fetch_time_series, covering nine charts.
+_SERVICE_URL = _product_url("ts21-service-data-and-operating-expenses-time-series-mode-2")
+_CAPITAL_EXPENDITURES_URL = _product_url("ts31-capital-expenditures-time-series-2")
+_FUNDING_URL = _product_url("ts12-operating-funding-time-series-3")
+_ASSET_URL = _product_url("ts41-asset-inventory-time-series-4")
+
+DEFAULT_TIME_SERIES_SOURCES: list[NtdTimeSeriesSource] = [
+    NtdTimeSeriesSource(name="Unlinked Passenger Trips", category="service", product_url=_SERVICE_URL, sheet="UPT"),
+    NtdTimeSeriesSource(name="Vehicle Revenue Hours", category="service", product_url=_SERVICE_URL, sheet="VRH"),
+    NtdTimeSeriesSource(
+        name="Vehicles Operated in Maximum Service", category="service", product_url=_SERVICE_URL, sheet="VOMS"
+    ),
+    NtdTimeSeriesSource(
+        name="Operating Expenses", category="expenditure", product_url=_SERVICE_URL, sheet="OpExp_Total"
+    ),
+    NtdTimeSeriesSource(
+        name="Capital Expenditures", category="expenditure", product_url=_CAPITAL_EXPENDITURES_URL, sheet="Total"
+    ),
+    NtdTimeSeriesSource(
+        name="Total Operating Funding", category="funding", product_url=_FUNDING_URL, sheet="Operating_Total"
+    ),
+    NtdTimeSeriesSource(
+        name="Total Capital Funding", category="funding", product_url=_FUNDING_URL, sheet="Capital_Total"
+    ),
+    NtdTimeSeriesSource(name="Active Fleet Size", category="asset", product_url=_ASSET_URL, sheet="Active_Fleet"),
+    NtdTimeSeriesSource(name="Average Fleet Age", category="asset", product_url=_ASSET_URL, sheet="Avg_Fleet_Age"),
+]
 
 # Mirrors the User-Agent cal-itp/data-infra sends — some government sites
 # block requests with no browser-like User-Agent at all.

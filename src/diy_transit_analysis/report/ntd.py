@@ -2,9 +2,10 @@
 
 Spec: specs/data-model.md#ntd-time-series-report-output
 
-One section per configured `category` (fixed order: Service, Expenditure,
-Funding, Asset), one chart per `ntd.time_series[]` entry, filtered to one
-agency's `ntd_id`. Same self-contained inline-SVG rendering approach as
+One section per `category` (fixed order: Service, Expenditure, Funding,
+Asset), one chart per built-in catalog entry
+(ntd.timeseries.DEFAULT_TIME_SERIES_SOURCES), filtered to one agency's
+`ntd_id`. Same self-contained inline-SVG rendering approach as
 report/dashboard.py, via the shared report/html_charts.py helpers — see
 specs/architecture.md#the-report-html-dashboards-rendering-approach.
 """
@@ -16,8 +17,8 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
-from diy_transit_analysis.config import NtdTimeSeriesSource
 from diy_transit_analysis.ntd import timeseries
+from diy_transit_analysis.ntd.timeseries import NtdTimeSeriesSource
 from diy_transit_analysis.report import html_charts
 
 _CATEGORY_ORDER = ["service", "expenditure", "funding", "asset"]

@@ -4,9 +4,10 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from diy_transit_analysis.config import NtdTimeSeriesSource
 from diy_transit_analysis.ntd.timeseries import (
+    DEFAULT_TIME_SERIES_SOURCES,
     NtdDataError,
+    NtdTimeSeriesSource,
     fetch_time_series,
     fetched_path,
     read_agency_series,
@@ -218,3 +219,28 @@ def test_read_agency_series_ignores_non_year_columns(tmp_path: Path):
     _write_csv(path, [{"NTD ID": 90019, "Agency": "SacRT", "UZA Name": "Sacramento", "2021": 5.0}])
 
     assert read_agency_series(path, "90019") == {2021: 5.0}
+
+
+# --- built-in catalog -------------------------------------------------------
+
+
+def test_default_time_series_sources_is_well_formed():
+    """The catalog is code, not user config — sanity-check its own shape.
+
+    See specs/architecture.md#ntd-time-series-data-access for the source
+    table this must match.
+    """
+    assert len(DEFAULT_TIME_SERIES_SOURCES) == 9
+
+    categories = {"service", "funding", "expenditure", "asset"}
+    assert {s.category for s in DEFAULT_TIME_SERIES_SOURCES} == categories
+
+    for source in DEFAULT_TIME_SERIES_SOURCES:
+        assert source.product_url.startswith("https://www.transit.dot.gov/ntd/data-product/")
+        assert source.sheet  # every catalog entry names a specific sheet
+
+    names = [s.name for s in DEFAULT_TIME_SERIES_SOURCES]
+    assert len(names) == len(set(names))  # no duplicate chart titles
+
+    # Fetching should dedupe to the 4 real landing pages this catalog cites.
+    assert len({s.product_url for s in DEFAULT_TIME_SERIES_SOURCES}) == 4

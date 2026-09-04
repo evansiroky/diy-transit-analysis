@@ -20,13 +20,7 @@ Top-level YAML document, loaded by `diy_transit_analysis.config`.
 | `agencies.<name>.date_range`        | map    | no       | Whole block is optional, independently of `tides:`. Required only for `report otp`, which needs a reporting window; `report schedule-stats` needs no date range at all (see [below](#gtfs-schedule-stats-report-output)). |
 | `agencies.<name>.date_range.start`  | date (`YYYY-MM-DD`) | yes, if `date_range:` present | Inclusive start of the reporting window. |
 | `agencies.<name>.date_range.end`    | date (`YYYY-MM-DD`) | yes, if `date_range:` present | Inclusive end of the reporting window. |
-| `agencies.<name>.ntd_id`            | string | no       | FTA's 5-digit NTD ID for this agency (e.g. `"90019"` for SacRT), used to filter the national NTD Time Series files down to this agency. Independent of `tides:`/`date_range:`. `report ntd` and the NTD portion of `run` require both this *and* the top-level `ntd:` block below; `fetch-ntd` needs only the top-level block (it fetches agency-independent files — see [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)). |
-| `ntd`                                | map    | no       | Top-level (not per-agency) — whole block optional. Configures the national NTD Time Series source files, shared across every agency. |
-| `ntd.time_series`                    | list   | yes, if `ntd:` present | List of metric sources to fetch and chart. Each entry becomes exactly one chart in `report ntd`'s output — see [below](#ntd-time-series-report-output). Adding/removing a metric is purely a config change, per [architecture.md#config-file-format](architecture.md#config-file-format). |
-| `ntd.time_series[].name`             | string | yes      | Human-readable metric name — used verbatim as the chart title. |
-| `ntd.time_series[].category`         | string, one of `service`/`funding`/`expenditure`/`asset` | yes | Which `report ntd` section this metric's chart is grouped into (see [below](#ntd-time-series-report-output)). |
-| `ntd.time_series[].product_url`      | string | yes      | Public URL of the NTD data product's **landing page** (e.g. `https://www.transit.dot.gov/ntd/data-product/ts21-...`) — not a direct file link; the actual `.xlsx` download link is scraped from this page at fetch time, since FTA doesn't publish a stable one (see [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)). Entries sharing the same `product_url` are fetched once, since it's the same workbook. |
-| `ntd.time_series[].sheet`            | string | no       | Which sheet/tab of the (possibly multi-sheet) downloaded workbook holds this metric. Matched case/punctuation-insensitively (see [below](#ntd-time-series-data-on-disk-fetched)). Omit for a workbook with a single relevant sheet — defaults to the first sheet. |
+| `agencies.<name>.ntd_id`            | string | no       | FTA's 5-digit NTD ID for this agency (e.g. `"90019"` for SacRT), used to filter the NTD Time Series data down to this agency. Independent of `tides:`/`date_range:`. The **only** NTD-related config field — which metrics get fetched/charted is a fixed, built-in catalog (`ntd.timeseries.DEFAULT_TIME_SERIES_SOURCES`), not something a user configures — see [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access) for why. `report ntd` and the NTD portion of `run` require this; `fetch-ntd` does not (it fetches the agency-independent catalog regardless — see [below](#ntd-time-series-data-on-disk-fetched)). |
 
 See [behaviors/config-validation.md](behaviors/config-validation.md) for
 validation rules.
@@ -124,8 +118,9 @@ bucket-verification Follow-up).
 
 ## NTD Time Series data (on disk, fetched)
 
-Fetching a `ntd.time_series[]` entry is two steps, per
-[architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access):
+Fetching one catalog entry
+([architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)'s
+`DEFAULT_TIME_SERIES_SOURCES`) is two steps:
 
 1. **Resolve the download link**: GET `product_url` (an HTML landing
    page), find the `<a>` element whose `type` attribute is
@@ -137,7 +132,7 @@ Fetching a `ntd.time_series[]` entry is two steps, per
 2. **Download that link** and save the workbook to
    `<output_dir>/ntd/raw/<slug-of-product_url's-landing-page-path>.xlsx`
    — **not** namespaced under an agency directory, since these files are
-   national/agency-independent. Every `ntd.time_series[]` entry sharing a
+   national/agency-independent. Every catalog entry sharing a
    `product_url` resolves to the same local file — the download happens
    once per unique `product_url`, not once per entry.
 
@@ -147,14 +142,14 @@ Fetching a `ntd.time_series[]` entry is two steps, per
 **Confirmed** (see
 [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)
 for the cal-itp/data-infra evidence this rests on): the workbook has
-**multiple sheets**, one per metric. `ntd.time_series[].sheet` selects
+**multiple sheets**, one per metric. The catalog entry's `sheet` selects
 which one — matched against the workbook's actual sheet names
 **case/punctuation-insensitively** (both sides normalized to lowercase
-alphanumerics before comparing, e.g. configured `"OpExp Total"` matches
-an actual tab named `"OpExp_Total"`), since the exact literal tab-name
-casing/spacing is unconfirmed. No `sheet:` configured means "use the
-first sheet" (fine for a workbook with only one relevant tab). A
-`sheet:` that matches nothing in the workbook is a loud failure
+alphanumerics before comparing, e.g. a catalog `sheet` of `"OpExp Total"`
+matches an actual tab named `"OpExp_Total"`), since the exact literal
+tab-name casing/spacing is unconfirmed. A `sheet` of `None` means "use
+the first sheet" (fine for a workbook with only one relevant tab). A
+`sheet` that matches nothing in the workbook is a loud failure
 (`NtdDataError`) listing every sheet name the workbook actually has, so
 a wrong guess is immediately visible rather than silently reading the
 wrong tab.
@@ -419,8 +414,8 @@ charts, no external requests) and same reasons as
 [the static HTML dashboard](#static-html-dashboard-report-output) — see
 [architecture.md#the-report-html-dashboards-rendering-approach](architecture.md#the-report-html-dashboards-rendering-approach).
 Produced by `report ntd` and, when configured, by `run`. Requires the
-selected agency to have `ntd_id:` configured, the top-level `ntd:` block
-configured, and NTD Time Series data already fetched (`fetch-ntd`) — see
+selected agency to have `ntd_id:` configured and NTD Time Series data
+already fetched (`fetch-ntd`) — see
 [behaviors/config-validation.md](behaviors/config-validation.md). Written
 to `<output_dir>/reports/<agency>/ntd-<min_year>-<max_year>.html`, where
 `min_year`/`max_year` are the earliest and latest years found across
@@ -434,20 +429,22 @@ requiring separate config, per
 
 **Structure**: one section per `category` (fixed order: **Service**,
 **Expenditure**, **Funding**, **Asset**), each containing one chart per
-`ntd.time_series[]` entry configured with that category, in config order.
-A section with zero configured entries of its category is omitted
-entirely; an entry whose fetched file yielded an empty series for this
-agency's `ntd_id` (see
-[above](#ntd-time-series-data-on-disk-fetched)) still gets its chart
-slot, rendered as an on-page note ("no data for NTD ID `<id>` in this
-file") rather than a broken/empty chart — same graceful-per-item-omission
-convention as the dashboard's independently-optional TIDES stats.
+built-in catalog entry
+([architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)'s
+`DEFAULT_TIME_SERIES_SOURCES`) with that category, in catalog order. A
+section with zero catalog entries of its category is omitted entirely;
+an entry whose fetched file yielded an empty series for this agency's
+`ntd_id` (see [above](#ntd-time-series-data-on-disk-fetched)) still gets
+its chart slot, rendered as an on-page note ("no data for NTD ID `<id>`
+in this file") rather than a broken/empty chart — same
+graceful-per-item-omission convention as the dashboard's
+independently-optional TIDES stats.
 
 Each chart is a year-on-the-x-axis line/area chart (the same
 `_area_chart_svg` component the dashboard uses, via the shared
-`report/html_charts.py` helpers) titled with the entry's configured
-`name`, plus a collapsed data table beneath it (`year -> value`) with the
-same "every value also reachable without hovering" rule as the dashboard.
+`report/html_charts.py` helpers) titled with the catalog entry's `name`,
+plus a collapsed data table beneath it (`year -> value`) with the same
+"every value also reachable without hovering" rule as the dashboard.
 
 The page's title bar states the agency name and the `ntd_id` used to
 filter every chart on the page, so a reader can immediately see which
@@ -472,7 +469,10 @@ bite here:
   filename does the equivalent: it anchors on the fetched data's own year
   range rather than a user-supplied or wall-clock date.
 - [Config-driven agency onboarding](principles.md#config-driven-agency-onboarding)
-  — generalized by the [NTD Time Series config](architecture.md#ntd-time-series-data-access)
-  from "onboarding an agency" to "onboarding a chart": which NTD metrics
-  get fetched and charted, and which report section each lands in, is
-  entirely config (`ntd.time_series[]`), never a code change.
+  — an agency opts into this report with a single field, `ntd_id:`; no
+  other NTD-related config exists. See
+  [architecture.md#ntd-time-series-data-access](architecture.md#ntd-time-series-data-access)
+  for why *which metrics get charted* is deliberately the opposite of
+  config-driven (a built-in catalog, not a per-deployment YAML list) —
+  that data isn't agency-specific, so putting it in config would only
+  shift this project's own integration work onto every user.

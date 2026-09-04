@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from diy_transit_analysis.config import NtdTimeSeriesSource
-from diy_transit_analysis.ntd.timeseries import NtdDataError, fetched_path
+from diy_transit_analysis.ntd.timeseries import NtdDataError, NtdTimeSeriesSource, fetched_path
 from diy_transit_analysis.report import ntd
 
 

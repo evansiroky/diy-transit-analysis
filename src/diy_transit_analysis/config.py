@@ -19,7 +19,6 @@ from pathlib import Path
 import yaml
 
 _ALLOWED_URL_SCHEMES = ("http://", "https://")
-_NTD_TIME_SERIES_CATEGORIES = ("service", "funding", "expenditure", "asset")
 
 
 class ConfigError(ValueError):
@@ -44,19 +43,6 @@ class DateRange:
 
 
 @dataclass(frozen=True)
-class NtdTimeSeriesSource:
-    name: str
-    category: str  # one of _NTD_TIME_SERIES_CATEGORIES
-    product_url: str  # the data product's landing page, not a direct file link
-    sheet: str | None = None  # workbook tab to read; None = first sheet
-
-
-@dataclass(frozen=True)
-class NtdConfig:
-    time_series: list[NtdTimeSeriesSource]
-
-
-@dataclass(frozen=True)
 class AgencyConfig:
     name: str
     gtfs_schedule_url: str
@@ -69,7 +55,6 @@ class AgencyConfig:
 class Config:
     output_dir: Path
     agencies: dict[str, AgencyConfig]
-    ntd: NtdConfig | None = None
 
 
 def _parse_date(raw: object, *, field: str, errors: list[str]) -> date | None:
@@ -124,69 +109,6 @@ def _parse_date_range(raw: object, *, field: str, errors: list[str]) -> DateRang
         errors.append(f"{field}: start ({start}) must be <= end ({end})")
         return None
     return DateRange(start=start, end=end)
-
-
-def _parse_ntd_time_series_source(raw: object, *, field: str, errors: list[str]) -> NtdTimeSeriesSource | None:
-    if not isinstance(raw, dict):
-        errors.append(f"{field}: must be a mapping (name, category, product_url)")
-        return None
-
-    name = raw.get("name")
-    if not isinstance(name, str) or not name:
-        errors.append(f"{field}.name: required, must be a non-empty string")
-        name = None
-
-    category = raw.get("category")
-    if not isinstance(category, str) or category not in _NTD_TIME_SERIES_CATEGORIES:
-        errors.append(
-            f"{field}.category: required, must be one of {', '.join(_NTD_TIME_SERIES_CATEGORIES)}, got {category!r}"
-        )
-        category = None
-
-    product_url = raw.get("product_url")
-    if not isinstance(product_url, str) or not product_url:
-        errors.append(f"{field}.product_url: required, must be a non-empty string")
-        product_url = None
-    elif not product_url.startswith(_ALLOWED_URL_SCHEMES):
-        errors.append(
-            f"{field}.product_url: must start with http:// or https:// "
-            f"(public data only — see specs/principles.md#public-data-only), got {product_url!r}"
-        )
-        product_url = None
-
-    sheet = raw.get("sheet")
-    sheet_ok = True
-    if sheet is not None and (not isinstance(sheet, str) or not sheet):
-        errors.append(f"{field}.sheet: must be a non-empty string if present")
-        sheet_ok = False
-
-    if name is None or category is None or product_url is None or not sheet_ok:
-        return None
-    return NtdTimeSeriesSource(name=name, category=category, product_url=product_url, sheet=sheet)
-
-
-def _parse_ntd(raw: object, *, field: str, errors: list[str]) -> NtdConfig | None:
-    if not isinstance(raw, dict):
-        errors.append(f"{field}: required mapping (time_series) is missing")
-        return None
-
-    time_series_raw = raw.get("time_series")
-    if not isinstance(time_series_raw, list) or not time_series_raw:
-        errors.append(f"{field}.time_series: required, must be a non-empty list")
-        return None
-
-    sources = []
-    ok = True
-    for i, entry_raw in enumerate(time_series_raw):
-        source = _parse_ntd_time_series_source(entry_raw, field=f"{field}.time_series[{i}]", errors=errors)
-        if source is None:
-            ok = False
-        else:
-            sources.append(source)
-
-    if not ok:
-        return None
-    return NtdConfig(time_series=sources)
 
 
 def _parse_agency(name: str, raw: object, *, errors: list[str]) -> AgencyConfig | None:
@@ -277,14 +199,6 @@ def load_config(path: str | Path) -> Config:
             if parsed is not None:
                 agencies[str(name)] = parsed
 
-    # ntd: is top-level (not per-agency) and whole-block optional, same
-    # pattern as tides:/date_range: within an agency (specs/behaviors/
-    # config-validation.md) — it configures shared, agency-independent
-    # source files (specs/architecture.md#ntd-time-series-data-access).
-    ntd: NtdConfig | None = None
-    if "ntd" in raw:
-        ntd = _parse_ntd(raw.get("ntd"), field="ntd", errors=errors)
-
     if errors:
         raise ConfigError(
             f"{path}: {len(errors)} config validation error(s):\n" + "\n".join(f"  - {e}" for e in errors)
@@ -293,7 +207,7 @@ def load_config(path: str | Path) -> Config:
     assert output_dir_raw is not None  # no errors means these are set
     output_dir = (path.parent / output_dir_raw).resolve() if not Path(output_dir_raw).is_absolute() else Path(output_dir_raw)
 
-    return Config(output_dir=output_dir, agencies=agencies, ntd=ntd)
+    return Config(output_dir=output_dir, agencies=agencies)
 
 
 def get_agency(config: Config, agency_name: str) -> AgencyConfig:

@@ -38,13 +38,15 @@ production NTD ingestion pipeline (confirmed by reading that project's
 source, since `transit.dot.gov` itself was egress-blocked while building
 this feature — see
 [`specs/architecture.md`](specs/architecture.md#ntd-time-series-data-access)).
-The four `product_url` landing pages in `config/example.yaml` are real,
-confirmed-live URLs; the per-metric `sheet:` values are a best-guess
-inferred from that same reference pipeline (not independently observed),
-so sheet matching is deliberately resilient (case/punctuation-insensitive,
-fails loudly listing the real sheet names on a miss) rather than pinned
-to exact text — see the module docstring in
-[`src/diy_transit_analysis/ntd/timeseries.py`](src/diy_transit_analysis/ntd/timeseries.py)
+Which NTD metrics get fetched and charted is a fixed, built-in catalog
+(`DEFAULT_TIME_SERIES_SOURCES` in
+[`src/diy_transit_analysis/ntd/timeseries.py`](src/diy_transit_analysis/ntd/timeseries.py)),
+not something a user configures — the four `product_url` landing pages
+in it are real, confirmed-live URLs, but the per-metric `sheet` values
+are a best-guess inferred from that same reference pipeline (not
+independently observed), so sheet matching is deliberately resilient
+(case/punctuation-insensitive, fails loudly listing the real sheet names
+on a miss) rather than pinned to exact text — see the module docstring
 before relying on this for real reporting.
 
 This project follows [spec-driven development](CLAUDE.md) — `specs/` is
@@ -70,10 +72,10 @@ diy-transit-analysis run --config config/example.yaml --agency SacRT
 `schedule-stats` and `html` (dashboard) reports, and — only if the
 agency's config includes a `tides:` block and a `date_range:` block —
 also fetches TIDES data and generates the `otp` (on-time-performance)
-report; and — only if the config includes a top-level `ntd:` block and
-the agency has `ntd_id:` configured — also fetches NTD Time Series data
-and generates the `ntd` report, printing what it did or skipped (and why)
-as it goes.
+report; and — only if the agency has `ntd_id:` configured — also fetches
+NTD Time Series data (against a fixed, built-in set of FTA metrics — see
+below) and generates the `ntd` report, printing what it did or skipped
+(and why) as it goes.
 
 An agency that only configures `gtfs_schedule_url` (no `tides:`, no
 `date_range:`, no `ntd_id:` — see the commented-out `SmallTownTransit`
@@ -93,10 +95,12 @@ benchmark scores (see the Status section above on the TIDES assumptions
 behind these two).
 
 `report ntd` writes a second, similarly self-contained HTML report of
-NTD Time Series trend charts for the agency — one chart per
-`ntd.time_series[]` entry configured, grouped into Service, Expenditure,
-Funding, and Asset sections (see the Status section above on the NTD
-assumptions behind this one).
+NTD Time Series trend charts for the agency — one chart per metric in
+the built-in catalog, grouped into Service, Expenditure, Funding, and
+Asset sections. The only config it needs is the agency's `ntd_id:`; which
+metrics get charted isn't configurable (see the Status section above on
+the NTD assumptions behind this one, and why the catalog lives in code
+rather than in every user's config).
 
 The individual pipeline stages are also available standalone:
 
@@ -116,9 +120,9 @@ agency; `fetch-tides` also requires a Google Cloud project with billing
 enabled, since the TIDES bucket is requester-pays (see the Status section
 above). `report html` works for any agency, showing its TIDES benchmarks
 section only when `tides:`/`date_range:` are configured and already
-fetched. `fetch-ntd` requires only the top-level `ntd:` block (it fetches
-files shared across every agency); `report ntd` additionally requires the
-selected agency's `ntd_id:` and that `fetch-ntd` has already run.
+fetched. `fetch-ntd` needs no agency-level config at all (it always
+fetches the built-in catalog); `report ntd` requires the selected
+agency's `ntd_id:` and that `fetch-ntd` has already run.
 
 ## Development
 

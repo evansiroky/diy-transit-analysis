@@ -62,14 +62,6 @@ def _require_date_range(agency: AgencyConfig, config_path: str, command: str) ->
         )
 
 
-def _require_ntd(config: Config, config_path: str, command: str) -> None:
-    if config.ntd is None:
-        raise SystemExit(
-            f"error: ntd is not configured in {config_path} — "
-            f"{command} requires a top-level ntd: block (time_series: [...])."
-        )
-
-
 def _require_ntd_id(agency: AgencyConfig, config_path: str, command: str) -> None:
     if agency.ntd_id is None:
         raise SystemExit(
@@ -94,15 +86,15 @@ def cmd_fetch_tides(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch_ntd(args: argparse.Namespace) -> int:
-    # Agency-independent fetch (specs/architecture.md#ntd-time-series-
-    # data-access) — --agency is still validated for CLI-shape
-    # consistency, but ntd_id isn't required for this command.
+    # Agency-independent fetch against the built-in catalog (specs/
+    # architecture.md#ntd-time-series-data-access) — --agency is still
+    # validated for CLI-shape consistency, but ntd_id isn't required for
+    # this command, and there's no NTD-related config to check at all.
     config, agency_name = _load(args)
-    _require_ntd(config, args.config, "fetch-ntd")
 
     dest_dir = config.output_dir / "ntd" / "raw"
-    print(f"Fetching {len(config.ntd.time_series)} NTD Time Series source(s) to {dest_dir} ...")
-    written = ntd_timeseries.fetch_time_series(config.ntd.time_series, dest_dir)
+    print(f"Fetching {len(ntd_timeseries.DEFAULT_TIME_SERIES_SOURCES)} NTD Time Series source(s) to {dest_dir} ...")
+    written = ntd_timeseries.fetch_time_series(ntd_timeseries.DEFAULT_TIME_SERIES_SOURCES, dest_dir)
     print(f"Saved {len(written)} file(s) to {dest_dir}.")
     return 0
 
@@ -207,7 +199,9 @@ def cmd_report_html(args: argparse.Namespace) -> int:
 
 def _write_ntd_report(config: Config, agency_name: str, ntd_id: str) -> None:
     raw_dir = config.output_dir / "ntd" / "raw"
-    data = ntd_report.build_ntd_report_data(config.ntd.time_series, raw_dir, agency=agency_name, ntd_id=ntd_id)
+    data = ntd_report.build_ntd_report_data(
+        ntd_timeseries.DEFAULT_TIME_SERIES_SOURCES, raw_dir, agency=agency_name, ntd_id=ntd_id
+    )
     html = ntd_report.render_html(data)
     dest = ntd_report.write_html(html, config.output_dir, agency_name, data.min_year, data.max_year)
     print(f"Wrote NTD Time Series report to {dest}.")
@@ -216,7 +210,6 @@ def _write_ntd_report(config: Config, agency_name: str, ntd_id: str) -> None:
 def cmd_report_ntd(args: argparse.Namespace) -> int:
     config, agency_name = _load(args)
     agency = get_agency(config, agency_name)
-    _require_ntd(config, args.config, "report ntd")
     _require_ntd_id(agency, args.config, "report ntd")
 
     raw_dir = config.output_dir / "ntd" / "raw"
@@ -235,9 +228,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     Always fetches GTFS and produces the schedule-stats report (GTFS-only,
     no tides/date_range needed). Fetches TIDES and produces the otp report
     only if the agency configured tides: (and, for otp, date_range: too).
-    Fetches NTD Time Series data and produces the ntd report only if both
-    the top-level ntd: block and the agency's ntd_id: are configured —
-    see specs/architecture.md#the-run-subcommand.
+    Fetches NTD Time Series data (against the built-in catalog — no
+    NTD-related config to check) and produces the ntd report only if the
+    agency's ntd_id: is configured — see
+    specs/architecture.md#the-run-subcommand.
     """
     config, agency_name = _load(args)
     agency = get_agency(config, agency_name)
@@ -297,17 +291,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"[run] Generating dashboard report for {agency_name} ...")
     _write_dashboard(feed, config, agency_name, tides_files=tides_files, date_range=date_range)
 
-    if config.ntd is None or agency.ntd_id is None:
-        missing = []
-        if config.ntd is None:
-            missing.append("ntd (top-level) is not configured")
-        if agency.ntd_id is None:
-            missing.append(f"agencies.{agency_name}.ntd_id is not configured")
-        print(f"[run] Skipped NTD fetch and the NTD Time Series report: {'; '.join(missing)}.")
+    if agency.ntd_id is None:
+        print(
+            f"[run] Skipped NTD fetch and the NTD Time Series report: "
+            f"agencies.{agency_name}.ntd_id is not configured."
+        )
     else:
         ntd_dest_dir = config.output_dir / "ntd" / "raw"
-        print(f"[run] Fetching {len(config.ntd.time_series)} NTD Time Series source(s) to {ntd_dest_dir} ...")
-        ntd_written = ntd_timeseries.fetch_time_series(config.ntd.time_series, ntd_dest_dir)
+        print(
+            f"[run] Fetching {len(ntd_timeseries.DEFAULT_TIME_SERIES_SOURCES)} "
+            f"NTD Time Series source(s) to {ntd_dest_dir} ..."
+        )
+        ntd_written = ntd_timeseries.fetch_time_series(ntd_timeseries.DEFAULT_TIME_SERIES_SOURCES, ntd_dest_dir)
         print(f"[run] Saved {len(ntd_written)} file(s) to {ntd_dest_dir}.")
 
         print(f"[run] Generating NTD Time Series report for {agency_name} ...")
@@ -332,7 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_tides.set_defaults(func=cmd_fetch_tides)
 
     fetch_ntd = subparsers.add_parser(
-        "fetch-ntd", help="Fetch the configured NTD Time Series source files (agency-independent)."
+        "fetch-ntd", help="Fetch the built-in catalog of NTD Time Series source files (agency-independent)."
     )
     _add_common_args(fetch_ntd)
     fetch_ntd.set_defaults(func=cmd_fetch_ntd)
